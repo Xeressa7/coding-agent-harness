@@ -1,0 +1,18 @@
+version: 1
+project: coding_harness
+memory_path: .memory
+
+scope: [current]
+components: [app]
+
+retrieval:
+  current: [product, current]
+  legacy: [product, legacy]
+
+write_policy: leader_only
+task_state: .memory/tasks/OPEN.md
+session_state: .memory/sessions/CURRENT.md
+
+# Oturum bağlam tercihi (`ctx preferences` yönetir; yorum satırı pasiftir):
+# index_budget: 6000   # kanca enjeksiyon tavanı, karakter (varsayılan 16000)
+# auto_index: false    # oturum başında harita enjekte etme (varsayılan açık)

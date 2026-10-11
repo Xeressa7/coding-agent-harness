@@ -1,0 +1,18 @@
+# ctx hafizasi — ayri bir Git reposu, bu repoya girmez
+/.memory/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Araç önbellekleri
+.pytest_cache/
+.ruff_cache/
+.import_linter_cache/
+
+# Oturum kayıtları (JSONL) — kişisel çalışma verisi
+/sessions/

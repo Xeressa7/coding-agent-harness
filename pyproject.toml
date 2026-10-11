@@ -1,0 +1,63 @@
+[project]
+name = "harness"
+version = "0.1.0"
+description = "LLM tabanlı coding agent harness'i — bitirme projesi"
+readme = "README.md"
+authors = [
+    { name = "Xeressa7", email = "onur5966@hotmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "pydantic>=2.13.5",
+    "rich>=15.0.0",
+    "typer>=0.27.2",
+]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.15",
+    "pyright>=1.1.414",
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F: temel hatalar · I: import sırası · B: sık yapılan hatalar
+# UP: güncel Python sözdizimi · SIM: sadeleştirilebilir kod
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# Katman kuralı: üstteki katman alttakini import edebilir, tersi yasak.
+# `|` ile ayrılanlar aynı katmanda ve birbirinden bağımsızdır.
+# tests/test_architecture.py bu kuralı her test koşumunda denetler.
+[tool.importlinter]
+root_package = "harness"
+
+[[tool.importlinter.contracts]]
+name = "Katmanlar: cli -> core -> llm | tools -> environments -> messages"
+type = "layers"
+layers = [
+    "harness.cli",
+    "harness.core",
+    "harness.llm | harness.tools",
+    "harness.environments",
+    "harness.messages",
+]
