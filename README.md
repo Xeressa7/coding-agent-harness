@@ -5,7 +5,15 @@ düzenleme, arama ve terminal araçları verip bunları denetimli bir döngüde
 çalıştıran komut satırı uygulaması. Tekirdağ Namık Kemal Üniversitesi
 Bilgisayar Mühendisliği bitirme projesi.
 
-> Durum: iskelet. Modüller boş; her birinin başında ne iş yapacağı yazıyor.
+> Durum: çekirdek döngü, `read_file` aracı ve oturum kaydı çalışıyor; model
+> şimdilik sahte (önceden yazılmış senaryo). Gerçek model adaptörü sıradaki adım.
+
+## Demo
+
+```sh
+uv run harness demo                 # sahte modelle hazır görev: döngü, araç, hata, kayıt
+uv run harness replay sessions/<dosya>.jsonl   # kaydedilmiş oturumu yeniden oynat
+```
 
 ## Mimari
 
