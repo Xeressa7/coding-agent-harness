@@ -15,6 +15,7 @@ from harness.messages import (
     SystemMessage,
     ToolCall,
     ToolResult,
+    ToolSpec,
     UserMessage,
 )
 from harness.tools.base import ToolRegistry
@@ -69,11 +70,33 @@ def test_tool_call_and_result_become_function_items() -> None:
         {
             "type": "function_call",
             "call_id": "c1",
+            "namespace": "harness",
             "name": "read_file",
             "arguments": '{"path": "a"}',
         },
         {"type": "function_call_output", "call_id": "c1", "output": "içerik"},
     ]
+
+
+def test_tools_are_offered_inside_a_namespace() -> None:
+    spec = ToolSpec(name="read_file", description="okur", parameters={"type": "object"})
+
+    body = build_request("m", [UserMessage(text="oku")], [spec])
+
+    (namespace,) = body["tools"]
+    assert namespace["type"] == "namespace"
+    assert namespace["tools"] == [
+        {
+            "type": "function",
+            "name": "read_file",
+            "description": "okur",
+            "parameters": {"type": "object"},
+        }
+    ]
+
+
+def test_no_tools_means_no_tools_field() -> None:
+    assert "tools" not in build_request("m", [UserMessage(text="selam")])
 
 
 async def test_streamed_answer_becomes_assistant_message() -> None:

@@ -6,7 +6,7 @@ internetsiz ve her koşumda aynı sonuçla çalışır.
 
 from collections.abc import Sequence
 
-from harness.messages import AssistantMessage, Message
+from harness.messages import AssistantMessage, Message, ToolSpec
 
 
 class ScriptExhaustedError(Exception):
@@ -23,10 +23,14 @@ class ScriptedLLM:
     def __init__(self, replies: Sequence[AssistantMessage]) -> None:
         self._replies = list(replies)
         self.received: list[tuple[Message, ...]] = []
+        self.offered_tools: list[tuple[ToolSpec, ...]] = []
 
-    async def complete(self, history: Sequence[Message]) -> AssistantMessage:
+    async def complete(
+        self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> AssistantMessage:
         # Geçmişin o anki kopyası saklanır: liste sonradan büyüse de kayıt değişmez.
         self.received.append(tuple(history))
+        self.offered_tools.append(tuple(tools))
         if not self._replies:
             raise ScriptExhaustedError(f"Senaryoda cevap kalmadı; bu {len(self.received)}. çağrı.")
         return self._replies.pop(0)

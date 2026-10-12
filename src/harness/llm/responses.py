@@ -22,10 +22,14 @@ from harness.messages import (
     SystemMessage,
     ToolCall,
     ToolResult,
+    ToolSpec,
     UserMessage,
 )
 
 API_URL = "https://api.openai.com/v1"
+
+# ChatGPT planıyla kullanımda fonksiyon araçları bir "namespace" içinde verilmeli.
+TOOL_NAMESPACE = "harness"
 
 
 class ResponsesError(Exception):
@@ -46,8 +50,10 @@ class ResponsesLLM:
         self._model = model
         self._http = http
 
-    async def complete(self, history: Sequence[Message]) -> AssistantMessage:
-        body = build_request(self._model, history)
+    async def complete(
+        self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> AssistantMessage:
+        body = build_request(self._model, history, tools)
         headers = {"Authorization": f"Bearer {await self._tokens.access_token()}"}
         async with self._http.stream(
             "POST", f"{API_URL}/responses", json=body, headers=headers
@@ -75,7 +81,9 @@ class ResponsesLLM:
         raise ResponsesError("Akış, cevap tamamlanmadan kesildi.")
 
 
-def build_request(model: str, history: Sequence[Message]) -> dict[str, Any]:
+def build_request(
+    model: str, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
+) -> dict[str, Any]:
     """messages.py geçmişini Responses API istek gövdesine çevirir."""
     instructions: list[str] = []
     items: list[dict[str, Any]] = []
@@ -93,6 +101,7 @@ def build_request(model: str, history: Sequence[Message]) -> dict[str, Any]:
                         {
                             "type": "function_call",
                             "call_id": call.id,
+                            "namespace": TOOL_NAMESPACE,
                             "name": call.name,
                             "arguments": call.arguments,
                         }
@@ -108,6 +117,23 @@ def build_request(model: str, history: Sequence[Message]) -> dict[str, Any]:
     body: dict[str, Any] = {"model": model, "input": items, "store": False, "stream": True}
     if instructions:
         body["instructions"] = "\n\n".join(instructions)
+    if tools:
+        body["tools"] = [
+            {
+                "type": "namespace",
+                "name": TOOL_NAMESPACE,
+                "description": "Harness'in çalışma dizini üzerinde kullanılan araçları",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                    for tool in tools
+                ],
+            }
+        ]
     return body
 
 

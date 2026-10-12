@@ -62,8 +62,8 @@ async def test_unknown_tool_lists_the_known_ones(registry: ToolRegistry) -> None
     assert "read_file" in result.content
 
 
-def test_schema_describes_parameters_to_the_model(registry: ToolRegistry) -> None:
-    (schema,) = registry.schemas()
+def test_spec_describes_parameters_to_the_model(registry: ToolRegistry) -> None:
+    (spec,) = registry.specs()
 
-    assert schema["name"] == "read_file"
-    assert schema["parameters"]["required"] == ["path"]
+    assert spec.name == "read_file"
+    assert spec.parameters["required"] == ["path"]

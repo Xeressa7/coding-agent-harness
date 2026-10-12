@@ -41,7 +41,7 @@ class Agent:
         yield TaskStarted(task=task)
 
         for step in range(1, self._max_steps + 1):
-            reply = await self._llm.complete(self.history)
+            reply = await self._llm.complete(self.history, self._tools.specs())
             self.history.append(reply)
             yield ModelReplied(step=step, text=reply.text, tool_calls=reply.tool_calls)
 

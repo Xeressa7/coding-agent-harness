@@ -3,6 +3,7 @@
 import json
 
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
@@ -20,8 +21,10 @@ def render(console: Console, event: Event) -> None:
             console.print(Text.assemble(("Kullanıcı: ", "bold cyan"), task))
         case ModelReplied(step=step, text=text, tool_calls=calls):
             console.print()
+            console.print(Text(f"[adım {step}] Model:", style="bold magenta"))
             if text:
-                console.print(Text.assemble((f"[adım {step}] Model: ", "bold magenta"), text))
+                # Gerçek modeller cevabı Markdown ile biçimlendirir (kalın, liste, kod).
+                console.print(Markdown(text))
             for call in calls:
                 console.print(Text.assemble(("  → araç isteği: ", "yellow"), _describe(call)))
         case ToolFinished(result=result):

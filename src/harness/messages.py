@@ -9,7 +9,7 @@ Mesajlar yazıldıktan sonra değişmez; konuşma yalnız sona eklenerek büyür
 Böylece mesaj geçmişi aynı zamanda ajanın ne yaptığının güvenilir kaydıdır.
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -30,6 +30,17 @@ class ToolCall(_Record):
     id: str
     name: str
     arguments: str
+
+
+class ToolSpec(_Record):
+    """Bir aracın modele tanıtımı: adı, ne işe yaradığı, girdilerinin JSON Schema'sı.
+
+    Sağlayıcıdan bağımsızdır; OpenAI ya da başka bir biçime çeviri adaptörün işidir.
+    """
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
 
 
 class SystemMessage(_Record):

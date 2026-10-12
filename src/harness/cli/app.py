@@ -13,6 +13,7 @@ from rich.console import Console
 
 from harness.cli.render import render
 from harness.core.agent import Agent
+from harness.core.config import find_project_root
 from harness.core.session_log import SessionLogger, read_session
 from harness.llm.chatgpt_auth import AuthError, ChatGPTTokens, login
 from harness.llm.responses import ResponsesError, ResponsesLLM, list_models
@@ -63,17 +64,29 @@ def load_system_prompt() -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip()
 
 
+def start_session() -> Path:
+    """Çalışma dizinini bulur ve ekrana yazar: kullanıcı ajanın neyi gördüğünü bilmeli."""
+    root = find_project_root(Path.cwd())
+    console.print(f"[dim]Çalışma dizini: {root}[/]")
+    return root
+
+
+def new_session_log(root: Path) -> SessionLogger:
+    return SessionLogger(root / "sessions" / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl")
+
+
 @app.command()
 def demo(
     delay: Annotated[float, typer.Option(help="Olaylar arası bekleme (saniye)")] = 0.8,
 ) -> None:
     """Sahte modelle hazır bir görevi çalıştırır: döngü, araç, hata ve kayıt bir arada."""
+    root = start_session()
     agent = Agent(
         llm=ScriptedLLM(DEMO_SCRIPT),
-        tools=ToolRegistry([ReadFile(root=Path.cwd())]),
+        tools=ToolRegistry([ReadFile(root=root)]),
         system_prompt=load_system_prompt(),
     )
-    log = SessionLogger(Path("sessions") / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl")
+    log = new_session_log(root)
 
     async def run() -> None:
         async for event in agent.run(DEMO_TASK):
@@ -132,13 +145,13 @@ def ask(
     question: Annotated[str, typer.Argument(help="Modele sorulacak soru")],
     model: Annotated[str, typer.Option(envvar="HARNESS_MODEL", help="Model adı")] = DEFAULT_MODEL,
 ) -> None:
-    """Gerçek modele (ChatGPT planı) araçsız bir soru sorar; aynı döngü ve aynı ekranla."""
+    """Gerçek modele (ChatGPT planı) bir görev verir; model projede dosya okuyabilir."""
 
     async def run() -> None:
         async with httpx.AsyncClient(timeout=120) as http:
             agent = Agent(
                 llm=ResponsesLLM(ChatGPTTokens(http), model, http),
-                tools=ToolRegistry([]),
+                tools=ToolRegistry([ReadFile(root=root)]),
                 system_prompt=load_system_prompt(),
             )
             with console.status(f"{model} düşünüyor…"):
@@ -146,7 +159,8 @@ def ask(
                     log.write(event)
                     render(console, event)
 
-    log = SessionLogger(Path("sessions") / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl")
+    root = start_session()
+    log = new_session_log(root)
     try:
         asyncio.run(run())
     except (AuthError, ResponsesError) as e:

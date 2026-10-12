@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from harness.messages import ToolCall, ToolResult
+from harness.messages import ToolCall, ToolResult, ToolSpec
 
 
 class ToolError(Exception):
@@ -29,13 +29,13 @@ class Tool[P: BaseModel](ABC):
     async def run(self, params: P) -> str:
         """Aracı çalıştırır, modele gidecek metni döner. Beklenen hatada ToolError fırlatır."""
 
-    def schema(self) -> dict[str, Any]:
+    def spec(self) -> ToolSpec:
         """Aracın modele tanıtımı: ad, açıklama, girdilerin JSON Schema'sı."""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "parameters": self.params_model.model_json_schema(),
-        }
+        return ToolSpec(
+            name=self.name,
+            description=self.description,
+            parameters=self.params_model.model_json_schema(),
+        )
 
 
 class ToolRegistry:
@@ -44,8 +44,8 @@ class ToolRegistry:
     def __init__(self, tools: list[Tool[Any]]) -> None:
         self._tools = {tool.name: tool for tool in tools}
 
-    def schemas(self) -> list[dict[str, Any]]:
-        return [tool.schema() for tool in self._tools.values()]
+    def specs(self) -> list[ToolSpec]:
+        return [tool.spec() for tool in self._tools.values()]
 
     async def call(self, call: ToolCall) -> ToolResult:
         """İsteği çalıştırır. Ne olursa olsun bir ToolResult döner, istisna fırlatmaz."""

@@ -80,6 +80,18 @@ async def test_stops_at_step_limit_even_if_model_keeps_asking(tmp_path: Path) ->
     assert len(model.received) == 3
 
 
+async def test_model_is_offered_the_tools_on_every_step(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    model = ScriptedLLM([read_call("c1", "a.txt"), AssistantMessage(text="tamam")])
+
+    await collect(make_agent(model, tmp_path), "oku")
+
+    assert [[spec.name for spec in tools] for tools in model.offered_tools] == [
+        ["read_file"],
+        ["read_file"],
+    ]
+
+
 async def test_history_starts_with_system_prompt_and_task(tmp_path: Path) -> None:
     model = ScriptedLLM([AssistantMessage(text="tamam")])
 
