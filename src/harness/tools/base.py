@@ -5,3 +5,67 @@ Schema) ve çalıştırma fonksiyonu vardır. Kayıt defteri araçları tutar,
 şemalarını modele sunar ve çağrıyı doğru araca yönlendirir. Araç hatası
 istisna olarak fırlamaz; hata mesajı araç sonucu olarak modele döner.
 """
+
+from abc import ABC, abstractmethod
+from typing import Any
+
+from pydantic import BaseModel, ValidationError
+
+from harness.messages import ToolCall, ToolResult
+
+
+class ToolError(Exception):
+    """Aracın modele açıklamak istediği beklenen hata (dosya yok, yol izinsiz...)."""
+
+
+class Tool[P: BaseModel](ABC):
+    """Bir araç: adı, modele açıklaması, girdi modeli ve çalıştırma fonksiyonu."""
+
+    name: str
+    description: str
+    params_model: type[P]
+
+    @abstractmethod
+    async def run(self, params: P) -> str:
+        """Aracı çalıştırır, modele gidecek metni döner. Beklenen hatada ToolError fırlatır."""
+
+    def schema(self) -> dict[str, Any]:
+        """Aracın modele tanıtımı: ad, açıklama, girdilerin JSON Schema'sı."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.params_model.model_json_schema(),
+        }
+
+
+class ToolRegistry:
+    """Araçları adlarıyla tutar; modelin isteğini doğru araca yönlendirir."""
+
+    def __init__(self, tools: list[Tool[Any]]) -> None:
+        self._tools = {tool.name: tool for tool in tools}
+
+    def schemas(self) -> list[dict[str, Any]]:
+        return [tool.schema() for tool in self._tools.values()]
+
+    async def call(self, call: ToolCall) -> ToolResult:
+        """İsteği çalıştırır. Ne olursa olsun bir ToolResult döner, istisna fırlatmaz."""
+        tool = self._tools.get(call.name)
+        if tool is None:
+            known = ", ".join(sorted(self._tools))
+            return _error(call, f"'{call.name}' adında araç yok. Var olanlar: {known}")
+        try:
+            params = tool.params_model.model_validate_json(call.arguments)
+        except ValidationError as e:
+            return _error(call, f"Argümanlar geçersiz: {e}")
+        try:
+            content = await tool.run(params)
+        except ToolError as e:
+            return _error(call, str(e))
+        except Exception as e:
+            # Beklenmeyen hata da modele döner; döngü çökmez, model başka yol dener.
+            return _error(call, f"Araç beklenmedik biçimde hata verdi: {type(e).__name__}: {e}")
+        return ToolResult(tool_call_id=call.id, content=content)
+
+
+def _error(call: ToolCall, message: str) -> ToolResult:
+    return ToolResult(tool_call_id=call.id, content=message, is_error=True)
