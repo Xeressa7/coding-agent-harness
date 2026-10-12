@@ -15,4 +15,4 @@ build/
 .import_linter_cache/
 
 # Oturum kayıtları (JSONL) — kişisel çalışma verisi
-/sessions/
+sessions/

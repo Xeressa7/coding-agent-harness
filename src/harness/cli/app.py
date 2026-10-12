@@ -7,12 +7,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 from rich.console import Console
 
 from harness.cli.render import render
 from harness.core.agent import Agent
 from harness.core.session_log import SessionLogger, read_session
+from harness.llm.chatgpt_auth import AuthError, ChatGPTTokens, login
+from harness.llm.responses import ResponsesError, ResponsesLLM, list_models
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage, ToolCall
 from harness.tools.base import ToolRegistry
@@ -22,6 +25,8 @@ app = typer.Typer(help="LLM tabanlı coding agent harness'i.", no_args_is_help=T
 console = Console()
 
 _PROMPT_FILE = Path(__file__).parent.parent / "prompts" / "system.md"
+
+DEFAULT_MODEL = "gpt-6-luna"  # küçük, kotayı az tüketen geliştirme modeli
 
 DEMO_TASK = "Bu proje hangi Python sürümünü istiyor, bağımlılıkları neler?"
 
@@ -87,6 +92,67 @@ def replay(path: Annotated[Path, typer.Argument(help="Oturum kaydı (.jsonl)")])
     """Kaydedilmiş bir oturumu, canlıdaki aynı ekranla yeniden oynatır."""
     for event in read_session(path):
         render(console, event)
+
+
+@app.command(name="login")
+def login_command() -> None:
+    """ChatGPT hesabıyla giriş: tarayıcı açılır, izin verilince belirteç kaydedilir."""
+    console.print("Tarayıcıda ChatGPT girişi açılıyor…")
+    try:
+        credentials = login(
+            on_url=lambda url: console.print(
+                f"Tarayıcı açılamadı; bu adresi tarayıcıya yapıştırın:\n{url}\n"
+            )
+        )
+    except AuthError as e:
+        console.print(f"[red]Giriş başarısız:[/] {e}")
+        raise typer.Exit(1) from e
+    console.print(f"[green]Giriş tamam.[/] Hesap: {credentials.email or '(e-posta yok)'}")
+
+
+@app.command()
+def models() -> None:
+    """Giriş yapılan hesabın kullanabildiği modelleri listeler."""
+
+    async def run() -> list[str]:
+        async with httpx.AsyncClient(timeout=30) as http:
+            return await list_models(ChatGPTTokens(http), http)
+
+    try:
+        names = asyncio.run(run())
+    except (AuthError, ResponsesError) as e:
+        console.print(f"[red]Hata:[/] {e}")
+        raise typer.Exit(1) from e
+    for name in names:
+        console.print(name)
+
+
+@app.command()
+def ask(
+    question: Annotated[str, typer.Argument(help="Modele sorulacak soru")],
+    model: Annotated[str, typer.Option(envvar="HARNESS_MODEL", help="Model adı")] = DEFAULT_MODEL,
+) -> None:
+    """Gerçek modele (ChatGPT planı) araçsız bir soru sorar; aynı döngü ve aynı ekranla."""
+
+    async def run() -> None:
+        async with httpx.AsyncClient(timeout=120) as http:
+            agent = Agent(
+                llm=ResponsesLLM(ChatGPTTokens(http), model, http),
+                tools=ToolRegistry([]),
+                system_prompt=load_system_prompt(),
+            )
+            with console.status(f"{model} düşünüyor…"):
+                async for event in agent.run(question):
+                    log.write(event)
+                    render(console, event)
+
+    log = SessionLogger(Path("sessions") / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl")
+    try:
+        asyncio.run(run())
+    except (AuthError, ResponsesError) as e:
+        console.print(f"[red]Hata:[/] {e}")
+        raise typer.Exit(1) from e
+    console.print(f"\nOturum kaydı: [bold]{log.path}[/]")
 
 
 def main() -> None:
