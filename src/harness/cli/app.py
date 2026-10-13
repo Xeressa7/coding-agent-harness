@@ -10,13 +10,15 @@ from typing import Annotated
 import httpx
 import typer
 from rich.console import Console
+from rich.prompt import IntPrompt
+from rich.table import Table
 
 from harness.cli.render import render
 from harness.core.agent import Agent
-from harness.core.config import find_project_root
+from harness.core.config import Settings, find_project_root, load_settings, save_settings
 from harness.core.session_log import SessionLogger, read_session
 from harness.llm.chatgpt_auth import AuthError, ChatGPTTokens, login
-from harness.llm.responses import ResponsesError, ResponsesLLM, list_models
+from harness.llm.responses import ModelInfo, ResponsesError, ResponsesLLM, list_models
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage, ToolCall
 from harness.tools.base import ToolRegistry
@@ -26,8 +28,6 @@ app = typer.Typer(help="LLM tabanlı coding agent harness'i.", no_args_is_help=T
 console = Console()
 
 _PROMPT_FILE = Path(__file__).parent.parent / "prompts" / "system.md"
-
-DEFAULT_MODEL = "gpt-6-luna"  # küçük, kotayı az tüketen geliştirme modeli
 
 DEMO_TASK = "Bu proje hangi Python sürümünü istiyor, bağımlılıkları neler?"
 
@@ -64,10 +64,10 @@ def load_system_prompt() -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip()
 
 
-def start_session() -> Path:
-    """Çalışma dizinini bulur ve ekrana yazar: kullanıcı ajanın neyi gördüğünü bilmeli."""
+def start_session(model_label: str) -> Path:
+    """Çalışma dizinini bulur; modeli ve dizini yazar: kullanıcı neyle çalıştığını bilmeli."""
     root = find_project_root(Path.cwd())
-    console.print(f"[dim]Çalışma dizini: {root}[/]")
+    console.print(f"[dim]Model: {model_label} · Çalışma dizini: {root}[/]")
     return root
 
 
@@ -80,7 +80,7 @@ def demo(
     delay: Annotated[float, typer.Option(help="Olaylar arası bekleme (saniye)")] = 0.8,
 ) -> None:
     """Sahte modelle hazır bir görevi çalıştırır: döngü, araç, hata ve kayıt bir arada."""
-    root = start_session()
+    root = start_session("sahte model (hazır senaryo)")
     agent = Agent(
         llm=ScriptedLLM(DEMO_SCRIPT),
         tools=ToolRegistry([ReadFile(root=root)]),
@@ -123,34 +123,88 @@ def login_command() -> None:
     console.print(f"[green]Giriş tamam.[/] Hesap: {credentials.email or '(e-posta yok)'}")
 
 
-@app.command()
-def models() -> None:
-    """Giriş yapılan hesabın kullanabildiği modelleri listeler."""
-
-    async def run() -> list[str]:
+def fetch_models() -> list[ModelInfo]:
+    async def run() -> list[ModelInfo]:
         async with httpx.AsyncClient(timeout=30) as http:
             return await list_models(ChatGPTTokens(http), http)
 
+    return asyncio.run(run())
+
+
+def choose(title: str, rows: list[tuple[str, str]], default: int) -> int:
+    """Numaralı bir liste gösterir, kullanıcının seçtiği satırın sırasını (0'dan) döner."""
+    table = Table(title=title, title_justify="left", show_header=False, box=None)
+    for number, (name, description) in enumerate(rows, start=1):
+        marker = "●" if number - 1 == default else " "
+        table.add_row(f"{marker} {number}", f"[bold]{name}[/]", f"[dim]{description}[/]")
+    console.print(table)
+    choices = [str(number) for number in range(1, len(rows) + 1)]
+    number = IntPrompt.ask(
+        "Numara", choices=choices, show_choices=False, default=default + 1, console=console
+    )
+    return number - 1
+
+
+@app.command()
+def model() -> None:
+    """Model ve effort seçer; seçim kaydedilir, sonraki her görevde kullanılır."""
+    settings = load_settings()
     try:
-        names = asyncio.run(run())
+        models = fetch_models()
     except (AuthError, ResponsesError) as e:
         console.print(f"[red]Hata:[/] {e}")
         raise typer.Exit(1) from e
-    for name in names:
-        console.print(name)
+
+    slugs = [m.slug for m in models]
+    current = slugs.index(settings.model) if settings.model in slugs else 0
+    picked = models[
+        choose(
+            f"Modeller (şu an: {settings.model} · {settings.effort or 'varsayılan'})",
+            [(m.display_name, m.description) for m in models],
+            current,
+        )
+    ]
+
+    effort = None
+    if picked.efforts:
+        names = [e.name for e in picked.efforts]
+        # Aynı model yeniden seçildiyse eski effort, değilse modelin önerdiği varsayılan.
+        keep = settings.effort if picked.slug == settings.model else None
+        preferred = keep if keep in names else picked.default_effort
+        rows = [
+            (e.name, e.description + (" (önerilen)" if e.name == picked.default_effort else ""))
+            for e in picked.efforts
+        ]
+        index = choose(
+            f"{picked.display_name} ne kadar düşünsün? (effort)",
+            rows,
+            names.index(preferred) if preferred in names else 0,
+        )
+        effort = names[index]
+
+    save_settings(Settings(model=picked.slug, effort=effort))
+    console.print(f"[green]Kaydedildi:[/] {picked.display_name} · effort: {effort or 'varsayılan'}")
 
 
 @app.command()
 def ask(
     question: Annotated[str, typer.Argument(help="Modele sorulacak soru")],
-    model: Annotated[str, typer.Option(envvar="HARNESS_MODEL", help="Model adı")] = DEFAULT_MODEL,
+    model: Annotated[
+        str | None, typer.Option(help="Bu görev için model (kayıtlı seçimi ezer)")
+    ] = None,
+    effort: Annotated[
+        str | None, typer.Option(help="Bu görev için effort (kayıtlı seçimi ezer)")
+    ] = None,
 ) -> None:
     """Gerçek modele (ChatGPT planı) bir görev verir; model projede dosya okuyabilir."""
+    settings = load_settings()
+    model = model or settings.model
+    effort = effort or (settings.effort if model == settings.model else None)
 
     async def run() -> None:
         async with httpx.AsyncClient(timeout=120) as http:
             agent = Agent(
-                llm=ResponsesLLM(ChatGPTTokens(http), model, http),
+                llm=ResponsesLLM(ChatGPTTokens(http), model, http, effort),
                 tools=ToolRegistry([ReadFile(root=root)]),
                 system_prompt=load_system_prompt(),
             )
@@ -159,7 +213,7 @@ def ask(
                     log.write(event)
                     render(console, event)
 
-    root = start_session()
+    root = start_session(f"{model} · effort: {effort or 'varsayılan'}")
     log = new_session_log(root)
     try:
         asyncio.run(run())

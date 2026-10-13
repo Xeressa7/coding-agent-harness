@@ -6,6 +6,28 @@ yalnız ortam değişkeninden okunur.
 
 from pathlib import Path
 
+from pydantic import BaseModel
+
+DEFAULT_SETTINGS_PATH = Path.home() / ".harness" / "settings.json"
+
+
+class Settings(BaseModel):
+    """Kullanıcının kalıcı seçimleri; `harness model` ile değişir."""
+
+    model: str = "gpt-6-luna"
+    effort: str | None = None  # None: modelin kendi varsayılanı
+
+
+def load_settings(path: Path = DEFAULT_SETTINGS_PATH) -> Settings:
+    if not path.exists():
+        return Settings()
+    return Settings.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def save_settings(settings: Settings, path: Path = DEFAULT_SETTINGS_PATH) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(settings.model_dump_json(indent=2), encoding="utf-8")
+
 
 def find_project_root(start: Path, home: Path | None = None) -> Path:
     """Ajanın çalışacağı klasör: start'tan yukarı çıkarak bulunan ilk git deposunun kökü.

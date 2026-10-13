@@ -5,15 +5,20 @@ düzenleme, arama ve terminal araçları verip bunları denetimli bir döngüde
 çalıştıran komut satırı uygulaması. Tekirdağ Namık Kemal Üniversitesi
 Bilgisayar Mühendisliği bitirme projesi.
 
-> Durum: çekirdek döngü, `read_file` aracı ve oturum kaydı çalışıyor; model
-> şimdilik sahte (önceden yazılmış senaryo). Gerçek model adaptörü sıradaki adım.
+> Durum: çekirdek döngü, `read_file` aracı ve oturum kaydı çalışıyor; gerçek model
+> ChatGPT planı üzerinden (Responses API) bağlı. Sırada izin katmanı ve kalan araçlar.
 
-## Demo
+## Kullanım
 
 ```sh
 uv run harness demo                 # sahte modelle hazır görev: döngü, araç, hata, kayıt
+uv run harness login                # ChatGPT hesabıyla giriş (tarayıcı açılır)
+uv run harness model                # model ve effort seç (numarayla); seçim kaydedilir
+uv run harness ask "soru"           # gerçek modele görev ver; projede dosya okuyabilir
 uv run harness replay sessions/<dosya>.jsonl   # kaydedilmiş oturumu yeniden oynat
 ```
+
+Tek görevlik değişiklik için: `harness ask "soru" --model gpt-6-sol --effort high`.
 
 ## Mimari
 
