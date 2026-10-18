@@ -7,7 +7,16 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
-from harness.core.events import Event, ModelReplied, TaskFinished, TaskStarted, ToolFinished
+from harness.core.events import (
+    Event,
+    ModelReplied,
+    ModelStarted,
+    ModelTextDelta,
+    TaskFinished,
+    TaskStarted,
+    ToolFinished,
+    ToolStarted,
+)
 from harness.messages import ToolCall
 
 _MAX_SHOWN_LINES = 12
@@ -36,9 +45,16 @@ def render(console: Console, event: Event) -> None:
         case TaskFinished(reason="done", steps=steps):
             console.print()
             console.rule(f"[bold green]Görev bitti · {steps} adım")
-        case TaskFinished(steps=steps):
+        case TaskFinished(reason="step_limit", steps=steps):
             console.print()
             console.rule(f"[bold yellow]Adım sınırı doldu · {steps} adım")
+        case TaskFinished(reason=reason, error=error):
+            console.print(
+                Text(f"{'Durduruldu' if reason == 'cancelled' else 'Hata'}: {error or '—'}")
+            )
+        case ModelStarted() | ToolStarted() | ModelTextDelta():
+            # Ayrıntılı replay tamamlanmış ModelReplied'ı zaten çizer.
+            pass
 
 
 def _describe(call: ToolCall) -> str:

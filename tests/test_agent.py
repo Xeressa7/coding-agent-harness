@@ -5,7 +5,15 @@ from pathlib import Path
 import pytest
 
 from harness.core.agent import Agent
-from harness.core.events import Event, ModelReplied, TaskFinished, TaskStarted, ToolFinished
+from harness.core.events import (
+    Event,
+    ModelReplied,
+    ModelStarted,
+    TaskFinished,
+    TaskStarted,
+    ToolFinished,
+    ToolStarted,
+)
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage, ToolCall, ToolResult, UserMessage
 from harness.tools.base import ToolRegistry
@@ -34,11 +42,18 @@ async def test_answer_without_tools_finishes_in_one_step(tmp_path: Path) -> None
 
     events = await collect(agent, "selam")
 
-    assert events == [
-        TaskStarted(task="selam"),
-        ModelReplied(step=1, text="merhaba"),
-        TaskFinished(reason="done", steps=1),
+    assert [type(e) for e in events] == [
+        TaskStarted,
+        ModelStarted,
+        ModelReplied,
+        TaskFinished,
     ]
+    assert isinstance(events[0], TaskStarted) and events[0].task == "selam"
+    assert isinstance(events[2], ModelReplied) and events[2].text == "merhaba"
+    assert isinstance(events[-1], TaskFinished)
+    assert events[-1].reason == "done" and events[-1].steps == 1
+    assert all(e.timestamp is not None for e in events)
+    assert events[-1].duration_seconds is not None
 
 
 async def test_tool_result_reaches_the_model_on_the_next_step(tmp_path: Path) -> None:
@@ -49,8 +64,11 @@ async def test_tool_result_reaches_the_model_on_the_next_step(tmp_path: Path) ->
 
     assert [type(e) for e in events] == [
         TaskStarted,
+        ModelStarted,
         ModelReplied,
+        ToolStarted,
         ToolFinished,
+        ModelStarted,
         ModelReplied,
         TaskFinished,
     ]
@@ -68,7 +86,8 @@ async def test_tool_error_goes_back_to_the_model_and_loop_continues(tmp_path: Pa
 
     finished = [e for e in events if isinstance(e, ToolFinished)]
     assert finished[0].result.is_error
-    assert events[-1] == TaskFinished(reason="done", steps=2)
+    assert isinstance(events[-1], TaskFinished)
+    assert events[-1].reason == "done" and events[-1].steps == 2
 
 
 async def test_stops_at_step_limit_even_if_model_keeps_asking(tmp_path: Path) -> None:
@@ -76,7 +95,8 @@ async def test_stops_at_step_limit_even_if_model_keeps_asking(tmp_path: Path) ->
 
     events = await collect(make_agent(model, tmp_path, max_steps=3), "oku")
 
-    assert events[-1] == TaskFinished(reason="step_limit", steps=3)
+    assert isinstance(events[-1], TaskFinished)
+    assert events[-1].reason == "step_limit" and events[-1].steps == 3
     assert len(model.received) == 3
 
 

@@ -16,3 +16,9 @@ build/
 
 # Oturum kayıtları (JSONL) — kişisel çalışma verisi
 sessions/
+.temp_files/
+
+.wrongstack/
+!/.wrongstack/
+/.wrongstack/*
+!/.wrongstack/project.json

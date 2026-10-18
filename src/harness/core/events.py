@@ -1,65 +1,77 @@
-"""Çekirdeğin ön yüze bildirdiği olaylar.
+"""Çekirdek → ön yüz sözleşmesi; JSONL'de eski kayıtlar da okunabilir."""
 
-Örnekler: modelden metin parçası geldi, araç çağrısı başladı/bitti, kullanıcı
-onayı gerekiyor, görev bitti. Çekirdek ile ön yüz arasındaki tek sözleşme
-budur. Aynı çekirdeğin ileride TUI, masaüstü ya da web ön yüzüyle
-çalışabilmesini sağlayan ayrım burada.
-
-Olaylar da mesajlar gibi değiştirilemez ve JSON'a çevrilebilir: oturum kaydı
-bu olayların satır satır yazılmış hâlidir, masaüstü ön yüzü de ileride aynı
-olayları ağ üzerinden alacak.
-"""
-
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from harness.messages import ToolCall, ToolResult
+from harness.messages import TokenUsage, ToolCall, ToolResult
 
 
 class _Event(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
+    timestamp: datetime | None = None
 
 
 class TaskStarted(_Event):
-    """Kullanıcı bir görev verdi."""
-
     kind: Literal["task_started"] = "task_started"
     task: str
+    model: str | None = None
+    effort: str | None = None
+
+
+class ModelStarted(_Event):
+    kind: Literal["model_started"] = "model_started"
+    step: int
+
+
+class ModelTextDelta(_Event):
+    """Kısmi kullanıcı metni; tamamlanma/başarı veya token sayımı değildir."""
+
+    kind: Literal["model_text_delta"] = "model_text_delta"
+    step: int
+    text: str
 
 
 class ModelReplied(_Event):
-    """Model cevap verdi: metin, araç istekleri ya da ikisi birden."""
-
     kind: Literal["model_replied"] = "model_replied"
     step: int
     text: str
     tool_calls: tuple[ToolCall, ...] = ()
+    duration_seconds: float | None = Field(default=None, ge=0)
+    first_text_seconds: float | None = Field(default=None, ge=0)
+    usage: TokenUsage | None = None
+
+
+class ToolStarted(_Event):
+    kind: Literal["tool_started"] = "tool_started"
+    call: ToolCall
 
 
 class ToolFinished(_Event):
-    """İstenen araç çalıştı; sonucu (ya da hatası) modele gidecek."""
-
     kind: Literal["tool_finished"] = "tool_finished"
     call: ToolCall
     result: ToolResult
+    duration_seconds: float | None = Field(default=None, ge=0)
 
 
 class TaskFinished(_Event):
-    """Döngü durdu.
-
-    `done`: model araç istemeden cevap verdi, iş bitti.
-    `step_limit`: adım sınırı doldu, model hâlâ araç istiyordu.
-    """
+    """done yalnız modelin araç istemeyi bıraktığıdır; test başarısı değildir."""
 
     kind: Literal["task_finished"] = "task_finished"
-    reason: Literal["done", "step_limit"]
+    reason: Literal["done", "step_limit", "error", "cancelled"]
     steps: int
+    duration_seconds: float | None = Field(default=None, ge=0)
+    error: str | None = None
 
 
 Event = Annotated[
-    TaskStarted | ModelReplied | ToolFinished | TaskFinished,
+    TaskStarted
+    | ModelStarted
+    | ModelTextDelta
+    | ModelReplied
+    | ToolStarted
+    | ToolFinished
+    | TaskFinished,
     Field(discriminator="kind"),
 ]
-"""Çekirdeğin üretebileceği herhangi bir olay. JSON'dan okunurken `kind`
-alanına bakılarak doğru sınıf seçilir."""

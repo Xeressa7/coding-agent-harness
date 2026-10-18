@@ -11,7 +11,9 @@ gönderilemez, `instructions` alanına yazılır; cevap ancak
 """
 
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from contextlib import aclosing
+from time import perf_counter
 from typing import Any, Protocol
 
 import httpx
@@ -21,6 +23,8 @@ from harness.messages import (
     AssistantMessage,
     Message,
     SystemMessage,
+    TextDelta,
+    TokenUsage,
     ToolCall,
     ToolResult,
     ToolSpec,
@@ -82,6 +86,17 @@ class ResponsesLLM:
     async def complete(
         self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
     ) -> AssistantMessage:
+        async with aclosing(self.stream(history, tools)) as parts:
+            async for part in parts:
+                if isinstance(part, AssistantMessage):
+                    return part
+        raise ResponsesError("Akış, cevap tamamlanmadan kesildi.")
+
+    async def stream(
+        self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> AsyncGenerator[TextDelta | AssistantMessage, None]:
+        started = perf_counter()
+        first_text_seconds: float | None = None
         body = build_request(self._model, history, tools, self._effort)
         headers = {"Authorization": f"Bearer {await self._tokens.access_token()}"}
         async with self._http.stream(
@@ -97,8 +112,33 @@ class ResponsesLLM:
                 kind = event.get("type")
                 if kind == "response.output_item.done":
                     items.append(event["item"])
+                if kind == "response.output_text.delta" and event.get("delta"):
+                    if first_text_seconds is None:
+                        first_text_seconds = perf_counter() - started
+                    yield TextDelta(text=event["delta"])
                 if kind == "response.completed":
-                    return parse_output(items or event["response"].get("output", []))
+                    response_data = event["response"]
+                    reply = parse_output(items or response_data.get("output", []))
+                    raw_usage = response_data.get("usage")
+                    usage = None
+                    if raw_usage is not None:
+                        input_details: dict[str, Any] = raw_usage.get("input_tokens_details") or {}
+                        output_details: dict[str, Any] = (
+                            raw_usage.get("output_tokens_details") or {}
+                        )
+                        usage = TokenUsage(
+                            input_tokens=raw_usage.get("input_tokens"),
+                            output_tokens=raw_usage.get("output_tokens"),
+                            cached_tokens=input_details.get("cached_tokens"),
+                            reasoning_tokens=output_details.get("reasoning_tokens"),
+                        )
+                    yield reply.model_copy(
+                        update={
+                            "usage": usage,
+                            "first_text_seconds": first_text_seconds,
+                        }
+                    )
+                    return
                 if kind == "response.failed":
                     error: dict[str, Any] = event["response"].get("error") or {}
                     raise ResponsesError(f"Model hata verdi: {error.get('code')}: {error}")

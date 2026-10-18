@@ -10,12 +10,16 @@ from typing import Annotated
 import httpx
 import typer
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.prompt import IntPrompt
 from rich.table import Table
+from rich.text import Text
 
+from harness.cli.inspector import summary_items, write_report
 from harness.cli.render import render
 from harness.core.agent import Agent
 from harness.core.config import Settings, find_project_root, load_settings, save_settings
+from harness.core.events import Event, ModelReplied, ModelStarted, ModelTextDelta, ToolStarted
 from harness.core.session_log import SessionLogger, read_session
 from harness.llm.chatgpt_auth import AuthError, ChatGPTTokens, login
 from harness.llm.responses import ModelInfo, ResponsesError, ResponsesLLM, list_models
@@ -72,12 +76,13 @@ def start_session(model_label: str) -> Path:
 
 
 def new_session_log(root: Path) -> SessionLogger:
-    return SessionLogger(root / "sessions" / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl")
+    return SessionLogger(root / "sessions" / f"{datetime.now():%Y%m%d-%H%M%S-%f}.jsonl")
 
 
 @app.command()
 def demo(
     delay: Annotated[float, typer.Option(help="Olaylar arası bekleme (saniye)")] = 0.8,
+    tui: Annotated[bool, typer.Option("--tui", help="Hazır senaryoyu tam ekran göster")] = False,
 ) -> None:
     """Sahte modelle hazır bir görevi çalıştırır: döngü, araç, hata ve kayıt bir arada."""
     root = start_session("sahte model (hazır senaryo)")
@@ -85,8 +90,17 @@ def demo(
         llm=ScriptedLLM(DEMO_SCRIPT),
         tools=ToolRegistry([ReadFile(root=root)]),
         system_prompt=load_system_prompt(),
+        model_label="sahte model (hazır senaryo)",
     )
     log = new_session_log(root)
+    if tui:
+        from harness.cli.tui import HarnessApp
+
+        screen = HarnessApp(
+            agent, log, model_label="Sahte model · hazır senaryo", root=root, initial_task=DEMO_TASK
+        )
+        screen.run()
+        return
 
     async def run() -> None:
         async for event in agent.run(DEMO_TASK):
@@ -95,9 +109,8 @@ def demo(
             await asyncio.sleep(delay)
 
     asyncio.run(run())
-    console.print(
-        f"\nOturum kaydı: [bold]{log.path}[/]  (tekrar izlemek için: harness replay {log.path})"
-    )
+    console.print(Text(f"\nOturum kaydı: {log.path}"))
+    console.print(Text(f"İnceleme: {write_report(log.path)}"))
 
 
 @app.command()
@@ -196,31 +209,172 @@ def ask(
         str | None, typer.Option(help="Bu görev için effort (kayıtlı seçimi ezer)")
     ] = None,
 ) -> None:
-    """Gerçek modele (ChatGPT planı) bir görev verir; model projede dosya okuyabilir."""
+    """Gerçek modele tek görev verir; ayrıntıları görev sonunda HTML'e kaydeder."""
     settings = load_settings()
-    model = model or settings.model
-    effort = effort or (settings.effort if model == settings.model else None)
+    picked_model = model or settings.model
+    picked_effort = effort or (settings.effort if picked_model == settings.model else None)
+    root = start_session(f"{picked_model} · effort: {picked_effort or 'varsayılan'}")
+    log = new_session_log(root)
+    console.rule("[bold cyan]Sen", align="left")
+    console.print(Text(question))
 
     async def run() -> None:
         async with httpx.AsyncClient(timeout=120) as http:
             agent = Agent(
-                llm=ResponsesLLM(ChatGPTTokens(http), model, http, effort),
+                llm=ResponsesLLM(ChatGPTTokens(http), picked_model, http, picked_effort),
                 tools=ToolRegistry([ReadFile(root=root)]),
                 system_prompt=load_system_prompt(),
+                model_label=picked_model,
+                effort=picked_effort,
             )
-            with console.status(f"{model} düşünüyor…"):
-                async for event in agent.run(question):
-                    log.write(event)
-                    render(console, event)
+            await run_turn(agent, question, log)
 
-    root = start_session(f"{model} · effort: {effort or 'varsayılan'}")
-    log = new_session_log(root)
     try:
         asyncio.run(run())
-    except (AuthError, ResponsesError) as e:
-        console.print(f"[red]Hata:[/] {e}")
-        raise typer.Exit(1) from e
-    console.print(f"\nOturum kaydı: [bold]{log.path}[/]")
+    except (AuthError, ResponsesError, httpx.HTTPError) as exc:
+        console.print(Text(f"Hata: {exc}", style="red"))
+        raise typer.Exit(1) from exc
+    except KeyboardInterrupt as exc:
+        console.print("Durduruldu.")
+        raise typer.Exit(130) from exc
+
+
+async def run_turn(agent: Agent, question: str, log: SessionLogger) -> Path | None:
+    events: list[Event] = []
+    report: Path | None = None
+    streamed_text = ""
+    stream_open = False
+    try:
+        with console.status("Model bekleniyor…") as status:
+            async for event in agent.run(question):
+                log.write(event)
+                events.append(event)
+                if isinstance(event, ModelStarted):
+                    streamed_text = ""
+                    status.start()
+                    status.update("Model bekleniyor…")
+                elif isinstance(event, ToolStarted):
+                    status.start()
+                    status.update("Dosyalar inceleniyor…")
+                elif isinstance(event, ModelTextDelta) and event.text:
+                    status.stop()
+                    if not stream_open:
+                        console.rule("[bold magenta]Ajan", align="left")
+                        stream_open = True
+                    console.print(Text(event.text), end="", soft_wrap=True)
+                    streamed_text += event.text
+                elif isinstance(event, ModelReplied):
+                    if stream_open:
+                        # Bazı sağlayıcılar son parçayı yalnız tamamlanmış mesajda verir.
+                        if event.text.startswith(streamed_text):
+                            console.print(
+                                Text(event.text[len(streamed_text) :]), end="", soft_wrap=True
+                            )
+                        elif event.text:
+                            console.print()
+                            console.print("[dim]Tamamlanmış yanıt:[/]")
+                            console.print(Markdown(event.text))
+                        console.print()
+                        stream_open = False
+                    elif not event.tool_calls and event.text:
+                        status.stop()
+                        console.rule("[bold magenta]Ajan", align="left")
+                        console.print(Markdown(event.text))
+    finally:
+        if stream_open:
+            console.print()
+            console.print("[yellow]Yanıt tamamlanmadı.[/]")
+        if events:
+            items = summary_items(events)
+            console.print(Text(" · ".join(f"{label}: {value}" for label, value in items)))
+            try:
+                report = write_report(log.path)
+                console.print(Text(f"İnceleme: {report}"))
+            except (OSError, ValueError) as exc:
+                console.print(Text(f"Rapor oluşturulamadı: {exc}", style="yellow"))
+            console.print(Text(f"Oturum kaydı: {log.path}"))
+    return report
+
+
+@app.command()
+def chat(
+    model: Annotated[str | None, typer.Option(help="Bu sohbet için model")] = None,
+    effort: Annotated[str | None, typer.Option(help="Bu sohbet için effort")] = None,
+    plain: Annotated[bool, typer.Option("--plain", help="Tam ekran yerine sade çıktı")] = False,
+) -> None:
+    """Tam ekran sohbet; --plain veya boruda sade çıktı. /exit çıkar, /inspect raporu açar."""
+    settings = load_settings()
+    picked_model = model or settings.model
+    picked_effort = effort or (settings.effort if picked_model == settings.model else None)
+    if not plain and sys.stdin.isatty() and sys.stdout.isatty():
+        from harness.cli.tui import run_tui
+
+        root = find_project_root(Path.cwd())
+        log = new_session_log(root)
+        run_tui(root, picked_model, picked_effort, load_system_prompt(), log)
+        if log.path.exists():
+            console.print(Text(f"Oturum kaydı: {log.path}"))
+        return
+    root = start_session(f"{picked_model} · effort: {picked_effort or 'varsayılan'}")
+    log = new_session_log(root)
+    console.print("/exit: çıkış · /inspect: son rapor · Ctrl+C: durdur")
+    console.print("Kayıt ve rapor, istemler ve dosya içerikleri gibi hassas veri içerebilir.")
+
+    async def run() -> None:
+        async with httpx.AsyncClient(timeout=120) as http:
+            agent = Agent(
+                llm=ResponsesLLM(ChatGPTTokens(http), picked_model, http, picked_effort),
+                tools=ToolRegistry([ReadFile(root=root)]),
+                system_prompt=load_system_prompt(),
+                model_label=picked_model,
+                effort=picked_effort,
+            )
+            report: Path | None = None
+            while True:
+                try:
+                    console.rule("[bold cyan]Sen", align="left")
+                    question = console.input("[bold cyan]> [/]").strip()
+                except EOFError:
+                    break
+                if question == "/exit":
+                    break
+                if question == "/inspect":
+                    if report:
+                        typer.launch(report.resolve().as_uri())
+                    else:
+                        console.print("Henüz rapor yok.")
+                    continue
+                if not question:
+                    continue
+                console.print()
+                report = await run_turn(agent, question, log)
+
+    try:
+        asyncio.run(run())
+    except (AuthError, ResponsesError, httpx.HTTPError) as exc:
+        # Eksik araç sonuçlarıyla yeni model isteği gönderilmez.
+        console.print(Text(f"Hata: {exc}. Sohbet sonlandırıldı; kayıt korundu.", style="red"))
+        raise typer.Exit(1) from exc
+    except KeyboardInterrupt as exc:
+        console.print("Durduruldu.")
+        raise typer.Exit(130) from exc
+
+
+@app.command(name="inspect")
+def inspect_session(
+    path: Annotated[Path, typer.Argument(help="İncelenecek oturum kaydı (.jsonl)")],
+    output: Annotated[Path | None, typer.Option(help="Yeni HTML dosyası (var olanı ezmez)")] = None,
+    open_browser: Annotated[bool, typer.Option("--open", help="Tarayıcıda da aç")] = False,
+) -> None:
+    """Eski veya yeni bir JSONL kaydından çevrimdışı inceleme ekranı üretir."""
+    try:
+        report = write_report(path, output)
+    except (OSError, ValueError) as exc:
+        console.print(Text(f"İnceleme açılamadı: {exc}", style="red"))
+        raise typer.Exit(1) from exc
+    console.print(Text(f"İnceleme: {report}"))
+    if open_browser:
+        typer.launch(report.resolve().as_uri())
 
 
 def main() -> None:

@@ -12,12 +12,13 @@ Oturum sonunda capture kararı ver: kalıcı bulgu varsa nota yazıp `ctx close 
 yoksa `ctx close --yok "<gerekçe>"` — karar vermemek geçersizdir.
 
 <!-- ctx:index:basla -->
-### Hafıza haritası — .memory · kapsam: current · 9 not
+### Hafıza haritası — coding_harness · kapsam: current · 10 not
 
 Bu bir **harita**, notun kendisi değil: ilgili satırı görünce **o notu aç**. Hedefli arama `ctx search "<sorgu>"`; bütün korpusu topluca yükleme.
 Açık işler `.memory/tasks/OPEN.md` · oturum devamı `.memory/sessions/CURRENT.md`.
 
 **facts/**
+- `gorev-sonrasi-inceleme.md` — chat tam ekran TUI veya sade akışta aynı süreçte geçmişi korur; ayrıntılar çevrimdışı HTML…
 - `harness-karsilastirmasi.md` — mini-swe-agent, pi, Aider, Claude Code, Codex, OpenCode, Hermes, WrongStack; boyutlar, ortak…
 
 **decisions/**

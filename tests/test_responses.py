@@ -13,6 +13,7 @@ from harness.llm.responses import ResponsesError, ResponsesLLM, build_request
 from harness.messages import (
     AssistantMessage,
     SystemMessage,
+    TokenUsage,
     ToolCall,
     ToolResult,
     ToolSpec,
@@ -99,6 +100,28 @@ def test_no_tools_means_no_tools_field() -> None:
     assert "tools" not in build_request("m", [UserMessage(text="selam")])
 
 
+async def test_completed_usage_is_normalized_without_subsets_added() -> None:
+    body = completed(text_item("ok"))
+    body["response"]["usage"] = {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "input_tokens_details": {"cached_tokens": 100},
+        "output_tokens_details": {"reasoning_tokens": 0},
+    }
+    async with fake_api(stream(body)) as http:
+        reply = await ResponsesLLM(FixedToken(), "m", http).complete([UserMessage(text="x")])
+    assert reply.usage == TokenUsage(
+        input_tokens=120,
+        output_tokens=30,
+        cached_tokens=100,
+        reasoning_tokens=0,
+    )
+    assert reply.first_text_seconds is None
+    request = build_request("m", [reply])
+    assert request["input"] == [{"role": "assistant", "content": "ok"}]
+    assert "usage" not in str(request)
+
+
 async def test_streamed_answer_becomes_assistant_message() -> None:
     seen: list[httpx.Request] = []
     body = stream(
@@ -108,7 +131,8 @@ async def test_streamed_answer_becomes_assistant_message() -> None:
     async with fake_api(body, seen=seen) as http:
         reply = await ResponsesLLM(FixedToken(), "m", http).complete([UserMessage(text="selam")])
 
-    assert reply == AssistantMessage(text="Merhaba")
+    assert reply.text == "Merhaba" and not reply.tool_calls and reply.usage is None
+    assert reply.first_text_seconds is not None and reply.first_text_seconds >= 0
     assert seen[0].headers["Authorization"] == "Bearer test-token"
 
 
@@ -163,4 +187,5 @@ async def test_real_adapter_plugs_into_the_same_loop() -> None:
         agent = Agent(llm, ToolRegistry([]), system_prompt="kural")
         events = [event async for event in agent.run("sürüm?")]
 
-    assert events[-1] == TaskFinished(reason="done", steps=1)
+    assert isinstance(events[-1], TaskFinished)
+    assert events[-1].reason == "done" and events[-1].steps == 1

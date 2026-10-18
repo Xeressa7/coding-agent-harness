@@ -57,12 +57,32 @@ class UserMessage(_Record):
     text: str
 
 
+class TokenUsage(_Record):
+    """Sağlayıcının bildirdiği sayımlar; None bilinmiyor, 0 gerçek sıfırdır.
+
+    Cache girdi, reasoning çıktı sayımının alt kümesidir; toplama eklenmez.
+    """
+
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cached_tokens: int | None = Field(default=None, ge=0)
+    reasoning_tokens: int | None = Field(default=None, ge=0)
+
+
+class TextDelta(_Record):
+    """Kullanıcıya yönelik çıktı metninin parçası; araç/reasoning verisi değildir."""
+
+    text: str
+
+
 class AssistantMessage(_Record):
     """Modelin cevabı: metin, araç istekleri ya da ikisi birden."""
 
     role: Literal["assistant"] = "assistant"
     text: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
+    usage: TokenUsage | None = None
+    first_text_seconds: float | None = Field(default=None, ge=0)
 
 
 class ToolResult(_Record):
