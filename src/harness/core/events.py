@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from harness.core.anatomy import Anatomy
 from harness.messages import Message, TokenUsage, ToolCall, ToolResult, ToolSpec
 
 
@@ -18,6 +19,7 @@ class TaskStarted(_Event):
     task: str
     model: str | None = None
     effort: str | None = None
+    anatomy: Anatomy | None = None  # None: anatomi kaydı öncesinden kalma oturum
 
 
 class ContextAssembled(_Event):

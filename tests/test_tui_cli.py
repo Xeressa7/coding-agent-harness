@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from harness.cli import app as cli
 from harness.cli import tui
+from harness.core.anatomy import Anatomy
 from harness.core.session_log import SessionLogger
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage
@@ -23,16 +24,23 @@ def test_interactive_chat_routes_to_tui(tmp_path: Path, monkeypatch: pytest.Monk
             stdout=SimpleNamespace(isatty=lambda: True),
         ),
     )
-    calls: list[str] = []
+    calls: list[tuple[str, str]] = []
 
-    def launch(root: Path, model: str, effort: str | None, prompt: str, log: SessionLogger) -> None:
-        calls.append(model)
+    def launch(
+        root: Path,
+        model: str,
+        effort: str | None,
+        prompt: str,
+        log: SessionLogger,
+        anatomy: Anatomy,
+    ) -> None:
+        calls.append((model, anatomy.name))
         assert root == tmp_path and prompt
 
     monkeypatch.setattr(tui, "run_tui", launch)
-    result = CliRunner().invoke(cli.app, ["chat", "--model", "test-model"])
+    result = CliRunner().invoke(cli.app, ["chat", "--model", "test-model", "--anatomy", "raw"])
     assert result.exit_code == 0, result.output
-    assert calls == ["test-model"]
+    assert calls == [("test-model", "raw")]
 
 
 def test_plain_bypasses_fullscreen_even_in_interactive_terminal(

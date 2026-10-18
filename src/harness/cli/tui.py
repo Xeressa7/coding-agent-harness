@@ -19,6 +19,7 @@ from textual.worker import Worker, WorkerCancelled
 
 from harness.cli.inspector import seconds, summary_items, write_report
 from harness.core.agent import Agent
+from harness.core.anatomy import Anatomy
 from harness.core.events import (
     ContextAssembled,
     Event,
@@ -33,8 +34,6 @@ from harness.core.events import (
 from harness.core.session_log import SessionLogger
 from harness.llm.chatgpt_auth import ChatGPTTokens
 from harness.llm.responses import ResponsesLLM
-from harness.tools.base import ToolRegistry
-from harness.tools.read_file import ReadFile
 
 
 class ComposeInput(TextArea):
@@ -451,15 +450,23 @@ class HarnessApp(App[None]):
             self.set_status("Henüz inceleme raporu yok.")
 
 
-def run_tui(root: Path, model: str, effort: str | None, prompt: str, log: SessionLogger) -> None:
+def run_tui(
+    root: Path,
+    model: str,
+    effort: str | None,
+    prompt: str,
+    log: SessionLogger,
+    anatomy: Anatomy,
+) -> None:
     async def run() -> None:
         async with httpx.AsyncClient(timeout=120) as http:
             agent = Agent(
                 ResponsesLLM(ChatGPTTokens(http), model, http, effort),
-                ToolRegistry([ReadFile(root=root)]),
+                anatomy.tool_registry(root),
                 prompt,
                 model_label=model,
                 effort=effort,
+                anatomy=anatomy,
             )
             await HarnessApp(agent, log, model_label=model, root=root).run_async()
 

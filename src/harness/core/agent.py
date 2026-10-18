@@ -15,6 +15,7 @@ from contextlib import aclosing
 from datetime import UTC, datetime
 from time import perf_counter
 
+from harness.core.anatomy import Anatomy
 from harness.core.events import (
     ContextAssembled,
     Event,
@@ -45,8 +46,10 @@ class Agent:
         max_steps: int = 20,
         model_label: str | None = None,
         effort: str | None = None,
+        anatomy: Anatomy | None = None,
     ) -> None:
         self._model_label = model_label
+        self._anatomy = anatomy
         self._effort = effort
         self._llm = llm
         self._tools = tools
@@ -58,7 +61,11 @@ class Agent:
         started = perf_counter()
         step = 0
         yield TaskStarted(
-            task=task, model=self._model_label, effort=self._effort, timestamp=datetime.now(UTC)
+            task=task,
+            model=self._model_label,
+            effort=self._effort,
+            anatomy=self._anatomy,
+            timestamp=datetime.now(UTC),
         )
         try:
             for step in range(1, self._max_steps + 1):

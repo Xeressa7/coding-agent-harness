@@ -18,6 +18,7 @@ from rich.text import Text
 from harness.cli.inspector import summary_items, write_report
 from harness.cli.render import render
 from harness.core.agent import Agent
+from harness.core.anatomy import DEFAULT_PRESET, PRESETS, Anatomy, get_preset
 from harness.core.config import Settings, find_project_root, load_settings, save_settings
 from harness.core.events import (
     Event,
@@ -32,8 +33,6 @@ from harness.llm.chatgpt_auth import AuthError, ChatGPTTokens, login
 from harness.llm.responses import ModelInfo, ResponsesError, ResponsesLLM, list_models
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage, ToolCall
-from harness.tools.base import ToolRegistry
-from harness.tools.read_file import ReadFile
 
 app = typer.Typer(help="LLM tabanlı coding agent harness'i.", no_args_is_help=True)
 console = Console()
@@ -69,6 +68,18 @@ DEMO_SCRIPT = [
 ]
 
 
+AnatomyOption = Annotated[
+    str, typer.Option("--anatomy", help=f"Açık katmanlar: {', '.join(PRESETS)}")
+]
+
+
+def pick_anatomy(name: str) -> Anatomy:
+    try:
+        return get_preset(name)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--anatomy") from exc
+
+
 def load_system_prompt() -> str:
     """system.md'yi okur; dosyanın başındaki açıklama yorumu modele gitmez."""
     text = _PROMPT_FILE.read_text(encoding="utf-8")
@@ -93,11 +104,13 @@ def demo(
 ) -> None:
     """Sahte modelle hazır bir görevi çalıştırır: döngü, araç, hata ve kayıt bir arada."""
     root = start_session("sahte model (hazır senaryo)")
+    anatomy = get_preset("files")  # senaryo read_file çağırır
     agent = Agent(
         llm=ScriptedLLM(DEMO_SCRIPT),
-        tools=ToolRegistry([ReadFile(root=root)]),
+        tools=anatomy.tool_registry(root),
         system_prompt=load_system_prompt(),
         model_label="sahte model (hazır senaryo)",
+        anatomy=anatomy,
     )
     log = new_session_log(root)
     if tui:
@@ -252,8 +265,10 @@ def ask(
     effort: Annotated[
         str | None, typer.Option(help="Bu görev için effort (kayıtlı seçimi ezer)")
     ] = None,
+    anatomy_name: AnatomyOption = DEFAULT_PRESET,
 ) -> None:
     """Gerçek modele tek görev verir; ayrıntıları görev sonunda HTML'e kaydeder."""
+    anatomy = pick_anatomy(anatomy_name)
     settings = load_settings()
     picked_model = model or settings.model
     picked_effort = effort or (settings.effort if picked_model == settings.model else None)
@@ -266,10 +281,11 @@ def ask(
         async with httpx.AsyncClient(timeout=120) as http:
             agent = Agent(
                 llm=ResponsesLLM(ChatGPTTokens(http), picked_model, http, picked_effort),
-                tools=ToolRegistry([ReadFile(root=root)]),
+                tools=anatomy.tool_registry(root),
                 system_prompt=load_system_prompt(),
                 model_label=picked_model,
                 effort=picked_effort,
+                anatomy=anatomy,
             )
             await run_turn(agent, question, log)
 
@@ -345,8 +361,10 @@ def chat(
     model: Annotated[str | None, typer.Option(help="Bu sohbet için model")] = None,
     effort: Annotated[str | None, typer.Option(help="Bu sohbet için effort")] = None,
     plain: Annotated[bool, typer.Option("--plain", help="Tam ekran yerine sade çıktı")] = False,
+    anatomy_name: AnatomyOption = DEFAULT_PRESET,
 ) -> None:
     """Tam ekran sohbet; --plain veya boruda sade çıktı. /exit çıkar, /inspect raporu açar."""
+    anatomy = pick_anatomy(anatomy_name)
     settings = load_settings()
     picked_model = model or settings.model
     picked_effort = effort or (settings.effort if picked_model == settings.model else None)
@@ -355,7 +373,7 @@ def chat(
 
         root = find_project_root(Path.cwd())
         log = new_session_log(root)
-        run_tui(root, picked_model, picked_effort, load_system_prompt(), log)
+        run_tui(root, picked_model, picked_effort, load_system_prompt(), log, anatomy)
         if log.path.exists():
             console.print(Text(f"Oturum kaydı: {log.path}"))
         return
@@ -368,10 +386,11 @@ def chat(
         async with httpx.AsyncClient(timeout=120) as http:
             agent = Agent(
                 llm=ResponsesLLM(ChatGPTTokens(http), picked_model, http, picked_effort),
-                tools=ToolRegistry([ReadFile(root=root)]),
+                tools=anatomy.tool_registry(root),
                 system_prompt=load_system_prompt(),
                 model_label=picked_model,
                 effort=picked_effort,
+                anatomy=anatomy,
             )
             report: Path | None = None
             while True:
