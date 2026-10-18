@@ -5,9 +5,16 @@ from pathlib import Path
 import pytest
 
 from harness.cli.inspector import render_report, summary_items, write_report
-from harness.core.events import Event, ModelReplied, TaskFinished, TaskStarted, ToolFinished
+from harness.core.events import (
+    ContextAssembled,
+    Event,
+    ModelReplied,
+    TaskFinished,
+    TaskStarted,
+    ToolFinished,
+)
 from harness.core.session_log import SessionLogger
-from harness.messages import TokenUsage, ToolCall, ToolResult
+from harness.messages import SystemMessage, TokenUsage, ToolCall, ToolResult, ToolSpec, UserMessage
 
 
 def turn(usage: TokenUsage | None = None) -> list[Event]:
@@ -63,6 +70,11 @@ def test_untrusted_text_and_tool_data_never_become_html() -> None:
     call = ToolCall(id=payload, name=payload, arguments=payload)
     events: list[Event] = [
         TaskStarted(task=payload, model=payload, effort=payload),
+        ContextAssembled(
+            step=1,
+            messages=(SystemMessage(text=payload), UserMessage(text=payload)),
+            tools=(ToolSpec(name=payload, description=payload, parameters={payload: payload}),),
+        ),
         ModelReplied(step=1, text=payload, tool_calls=(call,)),
         ToolFinished(
             call=call, result=ToolResult(tool_call_id=payload, content=payload, is_error=True)
@@ -116,3 +128,15 @@ def test_jsonl_report_keeps_full_real_tool_result(tmp_path: Path) -> None:
     log.write(ToolFinished(call=call, result=ToolResult(tool_call_id="1", content=result)))
     html = write_report(log.path).read_text(encoding="utf-8")
     assert "satır 99" in html and "a.txt" in html
+
+
+def test_context_shows_what_was_sent_and_its_size_per_role() -> None:
+    context = ContextAssembled(
+        step=1,
+        messages=(SystemMessage(text="talimat"), UserMessage(text="görevim")),
+        tools=(ToolSpec(name="read_file", description="okur", parameters={}),),
+    )
+    html = render_report([TaskStarted(task="t"), context], "c.jsonl")
+    assert "Modele giden bağlam · adım 1 · 2 mesaj · 1 araç" in html
+    assert "system" in html and "talimat" in html and "görevim" in html
+    assert "7 karakter" in html  # "talimat" ve "görevim" ayrı ayrı 7 karakter

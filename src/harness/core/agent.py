@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from time import perf_counter
 
 from harness.core.events import (
+    ContextAssembled,
     Event,
     ModelReplied,
     ModelStarted,
@@ -61,14 +62,18 @@ class Agent:
         )
         try:
             for step in range(1, self._max_steps + 1):
+                # Modele giden görünüm şimdilik tam geçmiştir; bağlam yöneticisi bunu ayıracak.
+                messages = tuple(self.history)
+                specs = tuple(self._tools.specs())
+                yield ContextAssembled(
+                    step=step, messages=messages, tools=specs, timestamp=datetime.now(UTC)
+                )
                 yield ModelStarted(step=step, timestamp=datetime.now(UTC))
                 model_started = perf_counter()
                 consumer_seconds = 0.0
                 if isinstance(self._llm, StreamingLLMClient):
                     reply: AssistantMessage | None = None
-                    async with aclosing(
-                        self._llm.stream(self.history, self._tools.specs())
-                    ) as parts:
+                    async with aclosing(self._llm.stream(messages, specs)) as parts:
                         async for part in parts:
                             if isinstance(part, AssistantMessage):
                                 reply = part
@@ -82,7 +87,7 @@ class Agent:
                     if reply is None:
                         raise RuntimeError("Model akışı tamamlanmış yanıt vermeden bitti.")
                 else:
-                    reply = await self._llm.complete(self.history, self._tools.specs())
+                    reply = await self._llm.complete(messages, specs)
                 model_duration = perf_counter() - model_started - consumer_seconds
                 self.history.append(reply)
                 yield ModelReplied(

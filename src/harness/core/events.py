@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from harness.messages import TokenUsage, ToolCall, ToolResult
+from harness.messages import Message, TokenUsage, ToolCall, ToolResult, ToolSpec
 
 
 class _Event(BaseModel):
@@ -18,6 +18,18 @@ class TaskStarted(_Event):
     task: str
     model: str | None = None
     effort: str | None = None
+
+
+class ContextAssembled(_Event):
+    """Bu adımda modele giden her şeyin birebir kopyası: mesajlar ve sunulan araç şemaları.
+
+    "Model neyi gördü?" sorusunun cevabıdır; kayıt büyür ama tahmin değil, gerçektir.
+    """
+
+    kind: Literal["context_assembled"] = "context_assembled"
+    step: int
+    messages: tuple[Message, ...]
+    tools: tuple[ToolSpec, ...] = ()
 
 
 class ModelStarted(_Event):
@@ -67,6 +79,7 @@ class TaskFinished(_Event):
 
 Event = Annotated[
     TaskStarted
+    | ContextAssembled
     | ModelStarted
     | ModelTextDelta
     | ModelReplied

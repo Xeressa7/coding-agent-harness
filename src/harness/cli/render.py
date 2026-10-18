@@ -8,6 +8,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from harness.core.events import (
+    ContextAssembled,
     Event,
     ModelReplied,
     ModelStarted,
@@ -52,8 +53,8 @@ def render(console: Console, event: Event) -> None:
             console.print(
                 Text(f"{'Durduruldu' if reason == 'cancelled' else 'Hata'}: {error or '—'}")
             )
-        case ModelStarted() | ToolStarted() | ModelTextDelta():
-            # Ayrıntılı replay tamamlanmış ModelReplied'ı zaten çizer.
+        case ContextAssembled() | ModelStarted() | ToolStarted() | ModelTextDelta():
+            # Ayrıntılı replay tamamlanmış ModelReplied'ı zaten çizer; bağlam HTML incelemededir.
             pass
 
 

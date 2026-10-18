@@ -6,6 +6,7 @@ import pytest
 
 from harness.core.agent import Agent
 from harness.core.events import (
+    ContextAssembled,
     Event,
     ModelReplied,
     ModelStarted,
@@ -44,12 +45,13 @@ async def test_answer_without_tools_finishes_in_one_step(tmp_path: Path) -> None
 
     assert [type(e) for e in events] == [
         TaskStarted,
+        ContextAssembled,
         ModelStarted,
         ModelReplied,
         TaskFinished,
     ]
     assert isinstance(events[0], TaskStarted) and events[0].task == "selam"
-    assert isinstance(events[2], ModelReplied) and events[2].text == "merhaba"
+    assert isinstance(events[3], ModelReplied) and events[3].text == "merhaba"
     assert isinstance(events[-1], TaskFinished)
     assert events[-1].reason == "done" and events[-1].steps == 1
     assert all(e.timestamp is not None for e in events)
@@ -64,10 +66,12 @@ async def test_tool_result_reaches_the_model_on_the_next_step(tmp_path: Path) ->
 
     assert [type(e) for e in events] == [
         TaskStarted,
+        ContextAssembled,
         ModelStarted,
         ModelReplied,
         ToolStarted,
         ToolFinished,
+        ContextAssembled,
         ModelStarted,
         ModelReplied,
         TaskFinished,
@@ -120,3 +124,15 @@ async def test_history_starts_with_system_prompt_and_task(tmp_path: Path) -> Non
     first_seen = model.received[0]
     assert first_seen[0].role == "system"
     assert first_seen[1] == UserMessage(text="görev")
+
+
+async def test_recorded_context_is_exactly_what_the_model_received(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    model = ScriptedLLM([read_call("c1", "a.txt"), AssistantMessage(text="tamam")])
+
+    events = await collect(make_agent(model, tmp_path), "oku")
+
+    contexts = [e for e in events if isinstance(e, ContextAssembled)]
+    assert [c.step for c in contexts] == [1, 2]
+    assert [c.messages for c in contexts] == model.received
+    assert [c.tools for c in contexts] == model.offered_tools

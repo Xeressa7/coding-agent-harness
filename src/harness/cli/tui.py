@@ -20,6 +20,7 @@ from textual.worker import Worker, WorkerCancelled
 from harness.cli.inspector import seconds, summary_items, write_report
 from harness.core.agent import Agent
 from harness.core.events import (
+    ContextAssembled,
     Event,
     ModelReplied,
     ModelStarted,
@@ -337,6 +338,8 @@ class HarnessApp(App[None]):
                                     "error": "Hata · ayrıntılar kayıtta",
                                 }[reason]
                             )
+                        case ContextAssembled():
+                            pass  # Bağlam terminale sığmaz; kayıtta ve HTML incelemede durur.
         except asyncio.CancelledError:
             if not finished:
                 self._record_cancelled_turn(question, events_seen)

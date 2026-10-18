@@ -1,10 +1,12 @@
 """JSONL kaydından çevrimdışı, çalıştırılabilir içerik barındırmayan inceleme raporu."""
 
+import json
 from collections.abc import Sequence
 from html import escape
 from pathlib import Path
 
 from harness.core.events import (
+    ContextAssembled,
     Event,
     ModelReplied,
     ModelStarted,
@@ -15,6 +17,7 @@ from harness.core.events import (
     ToolStarted,
 )
 from harness.core.session_log import read_session
+from harness.messages import AssistantMessage, Message, ToolResult
 
 _STATUS = {
     "done": "Tamamlandı",
@@ -73,11 +76,30 @@ def _pre(text: str) -> str:
     return f"<pre>{escape(text)}</pre>"
 
 
+def _message_text(message: Message) -> str:
+    """Mesajın modele giden metni; araç istekleri ad ve ham argümanla yazılır."""
+    match message:
+        case AssistantMessage(text=text, tool_calls=calls):
+            return "\n".join([text, *(f"{c.name}({c.arguments})" for c in calls)]).strip()
+        case ToolResult(content=content):
+            return content
+        case _:
+            return message.text
+
+
 def _event_html(event: Event) -> str:
     detail = ""
     match event:
         case TaskStarted():
             title = "Görev başladı"
+        case ContextAssembled(step=step, messages=messages, tools=tools):
+            title = f"Modele giden bağlam · adım {step} · {len(messages)} mesaj · {len(tools)} araç"
+            for message in messages:
+                text = _message_text(message)
+                detail += f"<h4>{escape(message.role)} · {len(text)} karakter</h4>" + _pre(text)
+            for spec in tools:
+                schema = f"{spec.description}\n{json.dumps(spec.parameters, ensure_ascii=False)}"
+                detail += f"<h4>Araç şeması: {escape(spec.name)}</h4>" + _pre(schema)
         case ModelStarted(step=step):
             title = f"Model çağrısı başladı · adım {step}"
         case ModelTextDelta(step=step, text=text):

@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from harness.cli.app import app
 from harness.core.events import (
+    ContextAssembled,
     Event,
     ModelReplied,
     ModelStarted,
@@ -16,13 +17,18 @@ from harness.core.events import (
     ToolFinished,
 )
 from harness.core.session_log import SessionLogger, read_session
-from harness.messages import ToolCall, ToolResult
+from harness.messages import SystemMessage, ToolCall, ToolResult, ToolSpec, UserMessage
 
 
 def test_events_survive_a_round_trip_through_the_log(tmp_path: Path) -> None:
     call = ToolCall(id="c1", name="read_file", arguments='{"path": "a.txt"}')
     events: list[Event] = [
         TaskStarted(task="görev"),
+        ContextAssembled(
+            step=1,
+            messages=(SystemMessage(text="talimat"), UserMessage(text="görev")),
+            tools=(ToolSpec(name="read_file", description="okur", parameters={}),),
+        ),
         ModelReplied(step=1, text="okuyorum", tool_calls=(call,)),
         ToolFinished(call=call, result=ToolResult(tool_call_id="c1", content="içerik")),
         TaskFinished(reason="done", steps=2),
