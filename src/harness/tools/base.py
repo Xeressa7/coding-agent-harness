@@ -7,6 +7,7 @@ istisna olarak fırlamaz; hata mesajı araç sonucu olarak modele döner.
 """
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -16,6 +17,17 @@ from harness.messages import ToolCall, ToolResult, ToolSpec
 
 class ToolError(Exception):
     """Aracın modele açıklamak istediği beklenen hata (dosya yok, yol izinsiz...)."""
+
+
+def resolve_inside(root: Path, raw: str) -> Path:
+    """Modelin verdiği yolu çalışma dizinine göre çözer; dışarı çıkıyorsa reddeder.
+
+    Asıl izin katmanı core/permissions.py'de olacak; bu, araçların kendi emniyet kemeri.
+    """
+    path = (root / raw).resolve()
+    if not path.is_relative_to(root):
+        raise ToolError(f"{raw}: çalışma dizini dışında.")
+    return path
 
 
 class Tool[P: BaseModel](ABC):

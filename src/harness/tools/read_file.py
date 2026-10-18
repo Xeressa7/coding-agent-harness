@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from harness.tools.base import Tool, ToolError
+from harness.tools.base import Tool, ToolError, resolve_inside
 
 
 class ReadFileParams(BaseModel):
@@ -22,10 +22,7 @@ class ReadFile(Tool[ReadFileParams]):
         self._root = root.resolve()
 
     async def run(self, params: ReadFileParams) -> str:
-        path = (self._root / params.path).resolve()
-        # Asıl izin katmanı core/permissions.py'de olacak; bu, aracın kendi emniyet kemeri.
-        if not path.is_relative_to(self._root):
-            raise ToolError(f"{params.path}: çalışma dizini dışında, okunamaz.")
+        path = resolve_inside(self._root, params.path)
         if not path.is_file():
             raise ToolError(f"{params.path}: böyle bir dosya yok.")
         try:
