@@ -11,7 +11,7 @@ from textual.widgets import Button
 
 from harness.cli.tui import ChatMessage, ComposeInput, HarnessApp
 from harness.core.agent import Agent
-from harness.core.events import TaskFinished
+from harness.core.events import TaskFinished, TaskStarted
 from harness.core.session_log import SessionLogger, read_session
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage, Message, TextDelta, TokenUsage, ToolCall, ToolSpec
@@ -295,6 +295,35 @@ async def test_stop_before_worker_starts_does_not_leave_interface_busy(tmp_path:
         assert not app.busy and app.failed
         assert app.query_one("#send", Button).disabled
         assert not app.query_one(ComposeInput).disabled
+    assert app.session_log.path.exists()
+    events = read_session(app.session_log.path)
+    assert isinstance(events[0], TaskStarted) and events[0].task == "hemen dur"
+    assert isinstance(events[-1], TaskFinished) and events[-1].reason == "cancelled"
+
+
+async def test_cancel_during_delta_render_records_cancelled_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = asyncio.Event()
+    model = ControlledModel()
+    app = make_app(model, tmp_path)
+
+    async def blocked_append(message: ChatMessage, text: str) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(ChatMessage, "append_delta", blocked_append)
+    async with app.run_test():
+        await app.submit("render beklerken iptal")
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        await app.action_stop()
+
+    events = read_session(app.session_log.path)
+    assert isinstance(events[-1], TaskFinished)
+    assert events[-1].reason == "cancelled"
+    assert app.report is not None
+    assert "Durduruldu" in app.report.read_text(encoding="utf-8")
 
 
 async def test_quit_waits_for_cancellation_and_preserves_log(tmp_path: Path) -> None:

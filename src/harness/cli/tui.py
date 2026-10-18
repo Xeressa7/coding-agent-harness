@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import aclosing, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -121,6 +122,8 @@ class HarnessApp(App[None]):
         self._turn: Worker[None] | None = None
         self._reply: ChatMessage | None = None
         self._turn_number = 0
+        self._active_question: str | None = None
+        self._active_events: list[Event] = []
         self.register_theme(
             Theme(
                 name="harness-dark",
@@ -252,6 +255,8 @@ class HarnessApp(App[None]):
             self.set_status("Yeni oturum için sohbeti yeniden aç.")
             return
         self.busy = True
+        self._active_question = question
+        self._active_events = []
         self._turn_number += 1
         self.query_one("#send", Button).disabled = True
         self.query_one("#stop", Button).disabled = False
@@ -276,7 +281,7 @@ class HarnessApp(App[None]):
         )
 
     async def consume(self, question: str) -> None:
-        events_seen: list[Event] = []
+        events_seen = self._active_events
         finished = False
         self._reply = None
         try:
@@ -333,8 +338,10 @@ class HarnessApp(App[None]):
                                 }[reason]
                             )
         except asyncio.CancelledError:
-            self.failed = True
-            self.set_status("Durduruldu · yeni oturum aç")
+            if not finished:
+                self._record_cancelled_turn(question, events_seen)
+                self.failed = True
+                self.set_status("Durduruldu · yeni oturum aç")
             raise
         except Exception:
             self.failed = True
@@ -357,6 +364,32 @@ class HarnessApp(App[None]):
             self.busy = False
             self.query_one("#send", Button).disabled = self.failed
             self.query_one("#stop", Button).disabled = True
+            if self._active_question == question:
+                self._active_question = None
+                self._active_events = []
+
+    def _record_cancelled_turn(self, question: str, events_seen: list[Event]) -> None:
+        if not any(isinstance(event, TaskStarted) for event in events_seen):
+            started = TaskStarted(
+                task=question,
+                model=self.model_label,
+                timestamp=datetime.now(UTC),
+            )
+            self.session_log.write(started)
+            events_seen.append(started)
+        if any(isinstance(event, TaskFinished) for event in events_seen):
+            return
+        steps = max(
+            (event.step for event in events_seen if isinstance(event, ModelStarted)),
+            default=0,
+        )
+        finished = TaskFinished(
+            reason="cancelled",
+            steps=steps,
+            timestamp=datetime.now(UTC),
+        )
+        self.session_log.write(finished)
+        events_seen.append(finished)
 
     async def wait_turn(self) -> None:
         if self._turn is not None:
@@ -367,8 +400,17 @@ class HarnessApp(App[None]):
         if self.busy and self._turn is not None:
             self._turn.cancel()
             await self.wait_turn()
-            # Başlamadan iptal edilen coroutine finally bloğuna giremez.
+            # Başlamadan iptal edilen coroutine consume() finally bloğuna giremez.
             if self.busy:
+                if self._active_question is not None:
+                    self._record_cancelled_turn(self._active_question, self._active_events)
+                    try:
+                        self.report = write_report(self.session_log.path)
+                        self.query_one("#inspect", Button).disabled = False
+                    except (OSError, ValueError):
+                        await self.add_flow("! Rapor oluşturulamadı; JSONL kaydına bak.")
+                    self._active_question = None
+                    self._active_events = []
                 self.busy = False
                 self.failed = True
                 self.set_status("Durduruldu · yeni oturum aç")

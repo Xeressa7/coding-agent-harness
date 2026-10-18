@@ -19,7 +19,14 @@ from harness.cli.inspector import summary_items, write_report
 from harness.cli.render import render
 from harness.core.agent import Agent
 from harness.core.config import Settings, find_project_root, load_settings, save_settings
-from harness.core.events import Event, ModelReplied, ModelStarted, ModelTextDelta, ToolStarted
+from harness.core.events import (
+    Event,
+    ModelReplied,
+    ModelStarted,
+    ModelTextDelta,
+    TaskStarted,
+    ToolStarted,
+)
 from harness.core.session_log import SessionLogger, read_session
 from harness.llm.chatgpt_auth import AuthError, ChatGPTTokens, login
 from harness.llm.responses import ModelInfo, ResponsesError, ResponsesLLM, list_models
@@ -116,8 +123,45 @@ def demo(
 @app.command()
 def replay(path: Annotated[Path, typer.Argument(help="Oturum kaydı (.jsonl)")]) -> None:
     """Kaydedilmiş bir oturumu, canlıdaki aynı ekranla yeniden oynatır."""
-    for event in read_session(path):
+    events = read_session(path)
+    completed_steps: set[tuple[int, int]] = set()
+    turn_index = 0
+    for event in events:
+        if isinstance(event, TaskStarted):
+            turn_index += 1
+        elif isinstance(event, ModelReplied):
+            completed_steps.add((turn_index, event.step))
+
+    turn_index = 0
+    partial_step: tuple[int, int] | None = None
+
+    def close_partial() -> None:
+        nonlocal partial_step
+        if partial_step is not None:
+            console.print()
+            console.print(Text("Yanıt tamamlanmadı.", style="yellow"))
+            partial_step = None
+
+    for event in events:
+        if isinstance(event, TaskStarted):
+            close_partial()
+            turn_index += 1
+        if isinstance(event, ModelTextDelta):
+            key = (turn_index, event.step)
+            if partial_step is not None and partial_step != key:
+                close_partial()
+            if key in completed_steps or not event.text:
+                continue
+            if partial_step is None:
+                console.rule(
+                    f"[bold yellow]Ajan · adım {event.step} · kısmi yanıt[/]", align="left"
+                )
+                partial_step = key
+            console.print(Text(event.text), end="", soft_wrap=True)
+            continue
+        close_partial()
         render(console, event)
+    close_partial()
 
 
 @app.command(name="login")
