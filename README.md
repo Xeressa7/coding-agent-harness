@@ -5,9 +5,11 @@ düzenleme, arama ve terminal araçları verip bunları denetimli bir döngüde
 çalıştıran komut satırı uygulaması. Tekirdağ Namık Kemal Üniversitesi
 Bilgisayar Mühendisliği bitirme projesi.
 
-> Durum: çekirdek döngü, `read_file`, çok turlu terminal sohbeti ve görev sonrası
-> yerel inceleme ekranı var. Gerçek model ChatGPT planı üzerinden (Responses API)
-> bağlı. İzin katmanı ve yazma/düzenleme/komut araçları henüz yok.
+> Durum: çekirdek döngü, bağlam yöneticisi (uzun araç çıktısını kırpar), izin
+> katmanı (ALLOW/ASK/DENY, oturum boyu izin ver), `read_file`/`write_file`/
+> `edit_file`/`search`/`bash` araçları, çok turlu terminal sohbeti ve görev
+> sonrası yerel inceleme ekranı var. Gerçek model ChatGPT planı üzerinden
+> (Responses API) bağlı.
 
 ## Kullanım
 

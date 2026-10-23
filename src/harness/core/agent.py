@@ -5,8 +5,10 @@ katmanından geçirip çalıştırır, sonucu mesaj geçmişine ekler ve modeli 
 çağırır. Model araç çağırmayı bıraktığında ya da adım/token limiti dolduğunda
 durur.
 
-Ekrana yazmaz, kullanıcıdan girdi almaz: her adımda events.py'deki bir olayı
-üretir. O olayı ekrana çizmek ön yüzün (cli/) işidir.
+Ekrana yazmaz: her adımda events.py'deki bir olayı üretir, onu çizmek ön
+yüzün (cli/) işidir. İzin katmanı "sor" dediğinde PermissionRequested üretir
+ve cevabı kendisi sormadan, `asend` ile geri gelecek şekilde bekler; cevapsız
+(örn. sade `async for` ile) geçilirse güvenli taraf seçilir: araç reddedilir.
 """
 
 import asyncio
@@ -16,19 +18,22 @@ from datetime import UTC, datetime
 from time import perf_counter
 
 from harness.core.anatomy import Anatomy
+from harness.core.context import truncated_history
 from harness.core.events import (
     ContextAssembled,
     Event,
     ModelReplied,
     ModelStarted,
     ModelTextDelta,
+    PermissionRequested,
     TaskFinished,
     TaskStarted,
     ToolFinished,
     ToolStarted,
 )
+from harness.core.permissions import Decision, PermissionManager
 from harness.llm.base import LLMClient, StreamingLLMClient
-from harness.messages import AssistantMessage, Message, SystemMessage, UserMessage
+from harness.messages import AssistantMessage, Message, SystemMessage, ToolResult, UserMessage
 from harness.tools.base import ToolRegistry
 
 
@@ -36,6 +41,8 @@ class Agent:
     """Modele sorar, istediği araçları çalıştırır, model "bitti" diyene kadar tekrarlar.
 
     Mesaj geçmişi `history`'de tutulur ve yalnız sona eklenerek büyür.
+    `permissions` da açıktır: ön yüz, "bu oturum için her zaman izin ver"
+    seçildiğinde doğrudan `agent.permissions.grant(ad)` çağırır.
     """
 
     def __init__(
@@ -43,6 +50,8 @@ class Agent:
         llm: LLMClient,
         tools: ToolRegistry,
         system_prompt: str,
+        *,
+        permissions: PermissionManager,
         max_steps: int = 20,
         model_label: str | None = None,
         effort: str | None = None,
@@ -53,10 +62,11 @@ class Agent:
         self._effort = effort
         self._llm = llm
         self._tools = tools
+        self.permissions = permissions
         self._max_steps = max_steps
         self.history: list[Message] = [SystemMessage(text=system_prompt)]
 
-    async def run(self, task: str) -> AsyncGenerator[Event, None]:
+    async def run(self, task: str) -> AsyncGenerator[Event, bool | None]:
         self.history.append(UserMessage(text=task))
         started = perf_counter()
         step = 0
@@ -69,8 +79,7 @@ class Agent:
         )
         try:
             for step in range(1, self._max_steps + 1):
-                # Modele giden görünüm şimdilik tam geçmiştir; bağlam yöneticisi bunu ayıracak.
-                messages = tuple(self.history)
+                messages = tuple(truncated_history(self.history))
                 specs = tuple(self._tools.specs())
                 yield ContextAssembled(
                     step=step, messages=messages, tools=specs, timestamp=datetime.now(UTC)
@@ -116,8 +125,25 @@ class Agent:
                     )
                     return
 
-                # TODO(izin katmanı): çağrı çalışmadan önce izin kontrolü eklenecek.
                 for call in reply.tool_calls:
+                    decision = self.permissions.decide(call)
+                    if decision is Decision.ASK:
+                        answer = yield PermissionRequested(call=call)
+                        decision = Decision.ALLOW if answer else Decision.DENY
+                    if decision is Decision.DENY:
+                        result = ToolResult(
+                            tool_call_id=call.id,
+                            content="İzin verilmedi, araç çalıştırılmadı.",
+                            is_error=True,
+                        )
+                        self.history.append(result)
+                        yield ToolFinished(
+                            call=call,
+                            result=result,
+                            duration_seconds=0.0,
+                            timestamp=datetime.now(UTC),
+                        )
+                        continue
                     yield ToolStarted(call=call, timestamp=datetime.now(UTC))
                     tool_started = perf_counter()
                     result = await self._tools.call(call)

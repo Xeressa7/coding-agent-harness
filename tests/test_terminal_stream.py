@@ -15,6 +15,7 @@ from harness.cli import app as cli
 from harness.core import agent as agent_module
 from harness.core.agent import Agent
 from harness.core.events import ModelReplied, ModelTextDelta, TaskFinished
+from harness.core.permissions import PermissionManager
 from harness.core.session_log import SessionLogger, read_session
 from harness.llm.responses import ResponsesError, ResponsesLLM
 from harness.messages import AssistantMessage
@@ -80,7 +81,13 @@ async def test_model_duration_excludes_time_spent_rendering_chunks(
     upstream.release.set()
     transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=upstream))
     async with httpx.AsyncClient(transport=transport) as http:
-        agent = Agent(ResponsesLLM(FixedToken(), "m", http), ToolRegistry([]), "kural")
+        tools = ToolRegistry([])
+        agent = Agent(
+            ResponsesLLM(FixedToken(), "m", http),
+            tools,
+            "kural",
+            permissions=PermissionManager(tmp_path, tools),
+        )
         events = [e async for e in agent.run("soru")]
     (reply,) = [e for e in events if isinstance(e, ModelReplied)]
     assert reply.duration_seconds == 9
@@ -109,7 +116,13 @@ async def test_first_text_visible_before_http_completion_and_final_not_duplicate
     transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=upstream))
     log = SessionLogger(tmp_path / "stream.jsonl")
     async with httpx.AsyncClient(transport=transport) as http:
-        agent = Agent(ResponsesLLM(FixedToken(), "test-model", http), ToolRegistry([]), "kural")
+        tools = ToolRegistry([])
+        agent = Agent(
+            ResponsesLLM(FixedToken(), "test-model", http),
+            tools,
+            "kural",
+            permissions=PermissionManager(tmp_path, tools),
+        )
         task = asyncio.create_task(cli.run_turn(agent, "selam", log))
         try:
             await asyncio.wait_for(upstream.waiting.wait(), timeout=2)
@@ -149,7 +162,13 @@ async def test_failure_or_cancellation_after_first_chunk_closes_http_and_keeps_p
     transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=upstream))
     log = SessionLogger(tmp_path / "partial.jsonl")
     async with httpx.AsyncClient(transport=transport) as http:
-        agent = Agent(ResponsesLLM(FixedToken(), "test-model", http), ToolRegistry([]), "kural")
+        tools = ToolRegistry([])
+        agent = Agent(
+            ResponsesLLM(FixedToken(), "test-model", http),
+            tools,
+            "kural",
+            permissions=PermissionManager(tmp_path, tools),
+        )
         task = asyncio.create_task(cli.run_turn(agent, "soru", log))
         await asyncio.wait_for(upstream.waiting.wait(), timeout=2)
         if cancel:
@@ -236,8 +255,12 @@ async def test_streamed_tool_turn_hides_raw_arguments_results_and_reasoning(
 
     log = SessionLogger(tmp_path / "tools.jsonl")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        tools = ToolRegistry([ReadFile(root=tmp_path)])
         agent = Agent(
-            ResponsesLLM(FixedToken(), "m", http), ToolRegistry([ReadFile(root=tmp_path)]), "kural"
+            ResponsesLLM(FixedToken(), "m", http),
+            tools,
+            "kural",
+            permissions=PermissionManager(tmp_path, tools),
         )
         await cli.run_turn(agent, "incele", log)
         await cli.run_turn(agent, "hatırla", log)
@@ -254,11 +277,19 @@ async def test_streamed_tool_turn_hides_raw_arguments_results_and_reasoning(
 
 
 @pytest.mark.anyio
-async def test_consumer_closing_agent_stream_closes_http_before_completion() -> None:
+async def test_consumer_closing_agent_stream_closes_http_before_completion(
+    tmp_path: Path,
+) -> None:
     upstream = GatedResponse()
     transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=upstream))
     async with httpx.AsyncClient(transport=transport) as http:
-        agent = Agent(ResponsesLLM(FixedToken(), "m", http), ToolRegistry([]), "kural")
+        tools = ToolRegistry([])
+        agent = Agent(
+            ResponsesLLM(FixedToken(), "m", http),
+            tools,
+            "kural",
+            permissions=PermissionManager(tmp_path, tools),
+        )
         events = agent.run("soru")
         async for event in events:
             if isinstance(event, ModelTextDelta):
@@ -288,8 +319,12 @@ async def test_tool_call_is_not_executed_if_http_ends_before_completed(
     transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body))
     log = SessionLogger(tmp_path / "cut.jsonl")
     async with httpx.AsyncClient(transport=transport) as http:
+        tools = ToolRegistry([ReadFile(root=tmp_path)])
         agent = Agent(
-            ResponsesLLM(FixedToken(), "m", http), ToolRegistry([ReadFile(root=tmp_path)]), "kural"
+            ResponsesLLM(FixedToken(), "m", http),
+            tools,
+            "kural",
+            permissions=PermissionManager(tmp_path, tools),
         )
         with pytest.raises(ResponsesError, match="tamamlanmadan"):
             await cli.run_turn(agent, "soru", log)
@@ -329,7 +364,13 @@ async def test_markup_is_literal_and_missing_final_delta_is_rendered_once(
     )
     transport = httpx.MockTransport(lambda request: httpx.Response(200, content=body))
     async with httpx.AsyncClient(transport=transport) as http:
-        agent = Agent(ResponsesLLM(FixedToken(), "m", http), ToolRegistry([]), "kural")
+        tools = ToolRegistry([])
+        agent = Agent(
+            ResponsesLLM(FixedToken(), "m", http),
+            tools,
+            "kural",
+            permissions=PermissionManager(tmp_path, tools),
+        )
         await cli.run_turn(agent, "soru", SessionLogger(tmp_path / "literal.jsonl"))
     assert output.getvalue().count("[bold]Türkçe[/bold] tamam.") == 1
     assert output.getvalue().count("Ajan") == 1

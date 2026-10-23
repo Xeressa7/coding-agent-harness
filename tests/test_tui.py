@@ -12,6 +12,7 @@ from textual.widgets import Button
 from harness.cli.tui import ChatMessage, ComposeInput, HarnessApp
 from harness.core.agent import Agent
 from harness.core.events import TaskFinished, TaskStarted
+from harness.core.permissions import PermissionManager
 from harness.core.session_log import SessionLogger, read_session
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage, Message, TextDelta, TokenUsage, ToolCall, ToolSpec
@@ -24,7 +25,8 @@ pytestmark = pytest.mark.anyio
 def make_app(model: object, tmp_path: Path) -> HarnessApp:
     # Concrete LLM doubles below satisfy the shared complete/stream protocols.
     assert isinstance(model, (ScriptedLLM, ControlledModel))
-    agent = Agent(model, ToolRegistry([ReadFile(root=tmp_path)]), "talimat")
+    tools = ToolRegistry([ReadFile(root=tmp_path)])
+    agent = Agent(model, tools, "talimat", permissions=PermissionManager(tmp_path, tools))
     return HarnessApp(
         agent, SessionLogger(tmp_path / "tui.jsonl"), model_label="test-model", root=tmp_path
     )

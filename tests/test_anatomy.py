@@ -9,7 +9,8 @@ from typer.testing import CliRunner
 from harness.cli.app import app
 from harness.core.agent import Agent
 from harness.core.anatomy import PRESETS, Anatomy, get_preset
-from harness.core.events import TaskStarted, ToolFinished
+from harness.core.events import Event, PermissionRequested, TaskStarted, ToolFinished
+from harness.core.permissions import PermissionManager
 from harness.core.session_log import SessionLogger, read_session
 from harness.environments.local import find_bash
 from harness.llm.scripted import ScriptedLLM
@@ -18,10 +19,28 @@ from harness.messages import AssistantMessage, ToolCall
 pytestmark = pytest.mark.anyio
 
 
+async def collect_approving(agent: Agent, task: str) -> list[Event]:
+    """`async for` gibi tüm olayları toplar, ama her PermissionRequested'ı onaylar."""
+    events: list[Event] = []
+    stream = agent.run(task)
+    send: bool | None = None
+    try:
+        while True:
+            event = await stream.asend(send)
+            events.append(event)
+            send = True if isinstance(event, PermissionRequested) else None
+    except StopAsyncIteration:
+        pass
+    return events
+
+
 async def offered_tool_names(anatomy: Anatomy, root: Path) -> list[str]:
     model = ScriptedLLM([AssistantMessage(text="tamam")])
-    agent = Agent(model, anatomy.tool_registry(root), "talimat", anatomy=anatomy)
-    _ = [event async for event in agent.run("görev")]
+    tools = anatomy.tool_registry(root)
+    agent = Agent(
+        model, tools, "talimat", permissions=PermissionManager(root, tools), anatomy=anatomy
+    )
+    _ = await collect_approving(agent, "görev")
     return [spec.name for spec in model.offered_tools[0]]
 
 
@@ -42,9 +61,12 @@ async def test_bash_preset_adds_only_bash_on_top_of_files(tmp_path: Path) -> Non
 async def test_every_run_records_its_anatomy(tmp_path: Path) -> None:
     anatomy = get_preset("raw")
     model = ScriptedLLM([AssistantMessage(text="tamam")])
-    agent = Agent(model, anatomy.tool_registry(tmp_path), "talimat", anatomy=anatomy)
+    tools = anatomy.tool_registry(tmp_path)
+    agent = Agent(
+        model, tools, "talimat", permissions=PermissionManager(tmp_path, tools), anatomy=anatomy
+    )
     log = SessionLogger(tmp_path / "kayit.jsonl")
-    async for event in agent.run("görev"):
+    for event in await collect_approving(agent, "görev"):
         log.write(event)
 
     started = read_session(log.path)[0]
@@ -91,9 +113,12 @@ async def test_bash_level_lets_the_model_see_its_error_and_fix_it(tmp_path: Path
         ]
     )
     anatomy = get_preset("bash")
-    agent = Agent(model, anatomy.tool_registry(tmp_path), "talimat", anatomy=anatomy)
+    tools = anatomy.tool_registry(tmp_path)
+    agent = Agent(
+        model, tools, "talimat", permissions=PermissionManager(tmp_path, tools), anatomy=anatomy
+    )
 
-    events = [event async for event in agent.run("gemiyi çalıştır")]
+    events = await collect_approving(agent, "gemiyi çalıştır")
 
     outputs = [e.result.content for e in events if isinstance(e, ToolFinished)]
     assert "NameError" in outputs[1] and outputs[1].startswith("çıkış kodu: 1")

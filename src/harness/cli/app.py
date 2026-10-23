@@ -16,7 +16,7 @@ from rich.table import Table
 from rich.text import Text
 
 from harness.cli.inspector import summary_items, write_report
-from harness.cli.render import render
+from harness.cli.render import ask_permission, render
 from harness.core.agent import Agent
 from harness.core.anatomy import DEFAULT_PRESET, PRESETS, Anatomy, get_preset
 from harness.core.config import Settings, find_project_root, load_settings, save_settings
@@ -25,9 +25,11 @@ from harness.core.events import (
     ModelReplied,
     ModelStarted,
     ModelTextDelta,
+    PermissionRequested,
     TaskStarted,
     ToolStarted,
 )
+from harness.core.permissions import PermissionManager
 from harness.core.session_log import SessionLogger, read_session
 from harness.llm.chatgpt_auth import AuthError, ChatGPTTokens, login
 from harness.llm.responses import ModelInfo, ResponsesError, ResponsesLLM, list_models
@@ -105,10 +107,12 @@ def demo(
     """Sahte modelle hazır bir görevi çalıştırır: döngü, araç, hata ve kayıt bir arada."""
     root = start_session("sahte model (hazır senaryo)")
     anatomy = get_preset("files")  # senaryo read_file çağırır
+    tools = anatomy.tool_registry(root)
     agent = Agent(
         llm=ScriptedLLM(DEMO_SCRIPT),
-        tools=anatomy.tool_registry(root),
+        tools=tools,
         system_prompt=load_system_prompt(),
+        permissions=PermissionManager(root, tools),
         model_label="sahte model (hazır senaryo)",
         anatomy=anatomy,
     )
@@ -123,10 +127,22 @@ def demo(
         return
 
     async def run() -> None:
-        async for event in agent.run(DEMO_TASK):
-            log.write(event)
-            render(console, event)
-            await asyncio.sleep(delay)
+        stream = agent.run(DEMO_TASK)
+        send: bool | None = None
+        try:
+            while True:
+                event = await stream.asend(send)
+                log.write(event)
+                render(console, event)
+                send = None
+                if isinstance(event, PermissionRequested):
+                    choice = ask_permission(console, event.call)
+                    if choice == "always":
+                        agent.permissions.grant(event.call.name)
+                    send = choice != "deny"
+                await asyncio.sleep(delay)
+        except StopAsyncIteration:
+            pass
 
     asyncio.run(run())
     console.print(Text(f"\nOturum kaydı: {log.path}"))
@@ -279,10 +295,12 @@ def ask(
 
     async def run() -> None:
         async with httpx.AsyncClient(timeout=120) as http:
+            tools = anatomy.tool_registry(root)
             agent = Agent(
                 llm=ResponsesLLM(ChatGPTTokens(http), picked_model, http, picked_effort),
-                tools=anatomy.tool_registry(root),
+                tools=tools,
                 system_prompt=load_system_prompt(),
+                permissions=PermissionManager(root, tools),
                 model_label=picked_model,
                 effort=picked_effort,
                 anatomy=anatomy,
@@ -306,13 +324,26 @@ async def run_turn(agent: Agent, question: str, log: SessionLogger) -> Path | No
     stream_open = False
     try:
         with console.status("Model bekleniyor…") as status:
-            async for event in agent.run(question):
+            stream = agent.run(question)
+            send: bool | None = None
+            while True:
+                try:
+                    event = await stream.asend(send)
+                except StopAsyncIteration:
+                    break
+                send = None
                 log.write(event)
                 events.append(event)
                 if isinstance(event, ModelStarted):
                     streamed_text = ""
                     status.start()
                     status.update("Model bekleniyor…")
+                elif isinstance(event, PermissionRequested):
+                    status.stop()
+                    choice = ask_permission(console, event.call)
+                    if choice == "always":
+                        agent.permissions.grant(event.call.name)
+                    send = choice != "deny"
                 elif isinstance(event, ToolStarted):
                     status.start()
                     status.update("Dosyalar inceleniyor…")
@@ -384,10 +415,12 @@ def chat(
 
     async def run() -> None:
         async with httpx.AsyncClient(timeout=120) as http:
+            tools = anatomy.tool_registry(root)
             agent = Agent(
                 llm=ResponsesLLM(ChatGPTTokens(http), picked_model, http, picked_effort),
-                tools=anatomy.tool_registry(root),
+                tools=tools,
                 system_prompt=load_system_prompt(),
+                permissions=PermissionManager(root, tools),
                 model_label=picked_model,
                 effort=picked_effort,
                 anatomy=anatomy,

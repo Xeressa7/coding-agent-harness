@@ -59,6 +59,9 @@ class ToolRegistry:
     def specs(self) -> list[ToolSpec]:
         return [tool.spec() for tool in self._tools.values()]
 
+    def get(self, name: str) -> Tool[Any] | None:
+        return self._tools.get(name)
+
     async def call(self, call: ToolCall) -> ToolResult:
         """İsteği çalıştırır. Ne olursa olsun bir ToolResult döner, istisna fırlatmaz."""
         tool = self._tools.get(call.name)

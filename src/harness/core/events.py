@@ -57,6 +57,17 @@ class ModelReplied(_Event):
     usage: TokenUsage | None = None
 
 
+class PermissionRequested(_Event):
+    """İzin katmanının "sor" dediği an; devam etmek için ön yüzün cevabı (asend ile) beklenir.
+
+    Cevapsız geçilirse (örn. eski bir tüketici hâlâ `async for` kullanıyorsa) güvenli
+    taraf seçilir: araç reddedilmiş sayılır.
+    """
+
+    kind: Literal["permission_requested"] = "permission_requested"
+    call: ToolCall
+
+
 class ToolStarted(_Event):
     kind: Literal["tool_started"] = "tool_started"
     call: ToolCall
@@ -85,6 +96,7 @@ Event = Annotated[
     | ModelStarted
     | ModelTextDelta
     | ModelReplied
+    | PermissionRequested
     | ToolStarted
     | ToolFinished
     | TaskFinished,
