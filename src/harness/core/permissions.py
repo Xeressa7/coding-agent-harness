@@ -24,8 +24,9 @@ class Decision(Enum):
     DENY = "deny"
 
 
-# İçeriği/durumu değiştirmeyen araçlar: sormadan izin verilir.
-_READ_ONLY = frozenset({"read_file", "search"})
+# İçeriği/durumu değiştirmeyen araç türleri: sormadan izin verilir. Yazma, komut ve
+# ağ araçları sorulur (ağ isteği dışarıya veri taşıyabilir).
+_HARMLESS = frozenset({"read", "search", "plan"})
 
 
 class PermissionManager:
@@ -38,16 +39,20 @@ class PermissionManager:
 
     def policy(self, name: str) -> Decision:
         """Aracın genel kuralı (yol denetimi hariç): sormadan mı çalışır, sorar mı?"""
-        if name in _READ_ONLY or name in self._always_allowed:
+        if self._harmless(name) or name in self._always_allowed:
             return Decision.ALLOW
         return Decision.ASK
+
+    def _harmless(self, name: str) -> bool:
+        tool = self._tools.get(name)
+        return tool is not None and tool.category in _HARMLESS
 
     def grant(self, name: str) -> None:
         """Bu araç için kalan oturum boyunca bir daha sorma; DENY yine de kazanır."""
         self._always_allowed.add(name)
 
     def decide(self, call: ToolCall) -> Decision:
-        if call.name in _READ_ONLY:
+        if self._harmless(call.name):
             return Decision.ALLOW
         tool = self._tools.get(call.name)
         if tool is None:

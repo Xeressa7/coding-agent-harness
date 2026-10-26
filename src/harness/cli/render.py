@@ -1,7 +1,7 @@
 """Çekirdeğin olaylarını terminale çizer: model metni, araç çağrıları, onay istemleri (Rich)."""
 
 import json
-from typing import Literal
+from typing import Any, Literal
 
 from rich.console import Console
 from rich.markdown import Markdown
@@ -45,12 +45,13 @@ def render(console: Console, event: Event) -> None:
                 console.print(Markdown(text))
             for call in calls:
                 console.print(Text.assemble(("  → araç isteği: ", "yellow"), _describe(call)))
-        case ToolFinished(result=result):
+        case ToolFinished(call=call, result=result, summary=summary, outcome=outcome):
             style = "red" if result.is_error else "green"
-            title = "araç hatası (modele geri döndü)" if result.is_error else "araç sonucu"
+            kind = "araç hatası (modele geri döndü)" if result.is_error else "araç sonucu"
+            title = " · ".join(part for part in (kind, call.name, summary, outcome) if part)
             # Text(): dosya içeriğindeki [köşeli parantez] Rich biçim komutu sanılmasın.
             body = Text(_shorten(result.content))
-            console.print(Panel(body, title=title, border_style=style))
+            console.print(Panel(body, title=Text(title), border_style=style))
         case CodeBlocksSaved():
             console.print(Text(f"[harness] {code_blocks_summary(event)}", style="cyan"))
         case TaskFinished(reason="done", steps=steps):
@@ -92,6 +93,27 @@ def _describe(call: ToolCall) -> str:
         return f"{call.name}({call.arguments})"
     shown = ", ".join(f"{key}={value!r}" for key, value in args.items())  # type: ignore[reportUnknownVariableType]
     return f"{call.name}({shown})"
+
+
+_PLAN_MARK = {"completed": "✓", "in_progress": "▸", "pending": "·"}
+
+
+def live_outcome(event: ToolFinished) -> str:
+    """Canlı ekranlar için tek satır: araç ve sonucu; yol, komut ve çıktı yok.
+
+    Ayrıntılar akan sohbeti bölmesin, rapordan incelensin (kullanıcı tercihi, 2026-10-17).
+    Hata metni yol içerebildiği için hatada yalnız "hata" yazılır.
+    """
+    if event.result.is_error:
+        refused = event.outcome == "izin verilmedi"
+        return f"! {event.call.name} · {'izin verilmedi' if refused else 'hata'}"
+    return f"✓ {event.call.name}" + (f" · {event.outcome}" if event.outcome else "")
+
+
+def plan_lines(details: dict[str, Any]) -> list[str]:
+    """update_plan'ın kayda geçen adımları, ekranda gösterilecek satırlar olarak."""
+    steps: list[dict[str, Any]] = details.get("steps") or []
+    return [f"{_PLAN_MARK.get(str(s.get('status')), '·')} {s.get('step', '')}" for s in steps]
 
 
 def _shorten(content: str) -> str:

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from harness.tools.base import Tool, ToolError, resolve_inside
+from harness.tools.base import Tool, ToolError, ToolOutput, count_lines, resolve_inside
 
 
 class EditFileParams(BaseModel):
@@ -25,11 +25,15 @@ class EditFile(Tool[EditFileParams]):
         "Eşleşme yoksa ya da birden fazlaysa hiçbir şey değişmez."
     )
     params_model = EditFileParams
+    category = "write"
 
     def __init__(self, root: Path) -> None:
         self._root = root.resolve()
 
-    async def run(self, params: EditFileParams) -> str:
+    def describe(self, params: EditFileParams) -> str:
+        return params.path
+
+    async def run(self, params: EditFileParams) -> ToolOutput:
         path = resolve_inside(self._root, params.path)
         if not path.is_file():
             raise ToolError(f"{params.path}: böyle bir dosya yok.")
@@ -58,4 +62,9 @@ class EditFile(Tool[EditFileParams]):
         with path.open("w", encoding="utf-8", newline="") as f:
             f.write(text.replace(old, new, 1))
         line = text.count("\n", 0, start) + 1
-        return f"{params.path}: {line}. satırdaki metin değiştirildi."
+        removed, added = count_lines(params.old_text), count_lines(params.new_text)
+        return ToolOutput(
+            f"{params.path}: {line}. satırdaki metin değiştirildi.",
+            summary=f"satır {line} · −{removed} +{added}",
+            details={"path": params.path, "line": line, "removed": removed, "added": added},
+        )

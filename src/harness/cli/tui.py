@@ -21,7 +21,7 @@ from textual.worker import Worker, WorkerCancelled
 
 from harness.cli.commands import ChatSession, CommandReply, is_command
 from harness.cli.inspector import code_blocks_summary, seconds, summary_items, write_report
-from harness.cli.render import PermissionChoice
+from harness.cli.render import PermissionChoice, live_outcome, plan_lines
 from harness.core.agent import Agent
 from harness.core.events import (
     CodeBlocksSaved,
@@ -110,13 +110,17 @@ class ChatMessage(Vertical):
 class PermissionDialog(ModalScreen[PermissionChoice]):
     """İzin katmanının "sor" dediği araç çağrısını gösterir; sonuç izin ver/reddet/oturum boyu."""
 
-    def __init__(self, call: ToolCall) -> None:
+    def __init__(self, call: ToolCall, summary: str = "") -> None:
         super().__init__()
         self._call = call
+        self._summary = summary
 
     def compose(self) -> ComposeResult:
+        title = f"İzin isteniyor: {self._call.name}" + (
+            f" · {self._summary}" if self._summary else ""
+        )
         with Vertical(id="permission-dialog"):
-            yield Static(Text(f"İzin isteniyor: {self._call.name}"), id="permission-title")
+            yield Static(Text(title), id="permission-title")
             yield Static(Text(self._call.arguments), id="permission-args")
             with Horizontal(id="permission-actions"):
                 yield Button("Reddet", id="deny")
@@ -414,19 +418,27 @@ class HarnessApp(App[None]):
                             if self._reply is not None:
                                 await self._reply.finish(text)
                             await self.add_flow(f"✓ Model · {seconds(duration)}")
-                        case PermissionRequested(call=call):
+                        case PermissionRequested(call=call, summary=summary):
                             self.set_status("İzin bekleniyor…")
                             await self.add_flow(f"? izin isteniyor · {call.name}")
-                            choice = await self.push_screen_wait(PermissionDialog(call))
+                            # Karar argümana göre verilir; ayrıntı yalnız pencerede görünür.
+                            choice = await self.push_screen_wait(PermissionDialog(call, summary))
                             if choice == "always":
                                 self.agent.permissions.grant(call.name)
                             send = choice != "deny"
                         case ToolStarted(call=call):
-                            self.set_status("Araç çalışıyor…")
+                            self.set_status(f"{call.name} çalışıyor…")
                             await self.add_flow(f"● {call.name}")
-                        case ToolFinished(call=call, result=result, duration_seconds=duration):
-                            mark = "!" if result.is_error else "✓"
-                            await self.add_flow(f"{mark} {call.name}\n{seconds(duration)}")
+                        case ToolFinished(
+                            call=call,
+                            result=result,
+                            duration_seconds=duration,
+                            details=details,
+                        ):
+                            # Yol, komut ve çıktı akışta görünmez (rapordadır); ne olduğu görünür.
+                            await self.add_flow(f"{live_outcome(event)}\n  {seconds(duration)}")
+                            if call.name == "update_plan" and not result.is_error:
+                                await self.add_flow("PLAN\n" + "\n".join(plan_lines(details)))
                         case CodeBlocksSaved():
                             await self.add_flow(f"✓ {code_blocks_summary(event)}")
                         case TaskFinished(reason=reason):

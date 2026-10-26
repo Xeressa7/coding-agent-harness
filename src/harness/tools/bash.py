@@ -8,7 +8,7 @@ yöneticisinin (ince katman) işidir; araç kırparsa o katmanın etkisi ölçü
 from pydantic import BaseModel, Field
 
 from harness.environments.base import CommandResult, Environment
-from harness.tools.base import Tool, ToolError
+from harness.tools.base import Tool, ToolError, ToolOutput, count_lines, short
 
 
 class BashParams(BaseModel):
@@ -23,11 +23,15 @@ class Bash(Tool[BashParams]):
         "Komuta girdi verilmez; etkileşimli komutlar çalışmaz."
     )
     params_model = BashParams
+    category = "exec"
 
     def __init__(self, environment: Environment) -> None:
         self._environment = environment
 
-    async def run(self, params: BashParams) -> str:
+    def describe(self, params: BashParams) -> str:
+        return f"$ {short(params.command, 70)}"
+
+    async def run(self, params: BashParams) -> ToolOutput:
         try:
             result = await self._environment.run(params.command, params.timeout_seconds)
         except FileNotFoundError as e:
@@ -36,7 +40,13 @@ class Bash(Tool[BashParams]):
             raise ToolError(
                 f"Komut {params.timeout_seconds} sn içinde bitmedi, durduruldu.\n" + _format(result)
             )
-        return _format(result)
+        out, err = count_lines(result.stdout), count_lines(result.stderr)
+        output = f"{out} satır çıktı" + (f", {err} satır hata çıktısı" if err else "")
+        return ToolOutput(
+            _format(result),
+            summary=f"çıkış kodu {result.exit_code} · {output}",
+            details={"exit_code": result.exit_code, "stdout_lines": out, "stderr_lines": err},
+        )
 
 
 def _format(result: CommandResult) -> str:

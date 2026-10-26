@@ -37,7 +37,7 @@ from harness.cli.commands import (
     is_command,
 )
 from harness.cli.inspector import code_blocks_summary, summary_items, write_report
-from harness.cli.render import ask_permission, render
+from harness.cli.render import ask_permission, live_outcome, render
 from harness.core.agent import Agent
 from harness.core.anatomy import DEFAULT_PRESET, PRESETS, Anatomy, get_preset
 from harness.core.config import (
@@ -57,6 +57,7 @@ from harness.core.events import (
     PermissionRequested,
     TaskFinished,
     TaskStarted,
+    ToolFinished,
     ToolStarted,
 )
 from harness.core.session_log import SessionLogger, list_sessions, read_session
@@ -376,7 +377,11 @@ async def run_turn(
                     status.update("Model bekleniyor…")
                 elif isinstance(event, ToolStarted):
                     status.start()
-                    status.update(f"Araç çalışıyor: {event.call.name}…")
+                    status.update(f"{event.call.name} çalışıyor…")
+                elif isinstance(event, ToolFinished):
+                    # Araç çıktısı gizli kalır; ne yapıldığı ve sonucu tek satırda görünür.
+                    status.stop()
+                    console.print(tool_trace(event), soft_wrap=True)
                 elif isinstance(event, ModelTextDelta) and event.text:
                     status.stop()
                     if not stream_open:
@@ -411,6 +416,10 @@ async def run_turn(
         if events:
             report = _after_turn(events, log, quiet)
     return TurnOutcome(finish, report)
+
+
+def tool_trace(event: ToolFinished) -> Text:
+    return Text(f"  {live_outcome(event)}", style="yellow" if event.result.is_error else "dim")
 
 
 def _permission(agent: Agent, event: PermissionRequested, *, interactive: bool) -> bool:

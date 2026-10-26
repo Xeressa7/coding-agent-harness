@@ -76,7 +76,7 @@ async def test_real_cancellation_preserves_a_cancelled_log_and_html(tmp_path: Pa
 @pytest.mark.anyio
 async def test_unexpected_tool_exception_is_not_task_success(tmp_path: Path) -> None:
     class BrokenRegistry(ToolRegistry):
-        async def call(self, call: ToolCall):
+        async def execute(self, call: ToolCall):
             raise RuntimeError("tool crashed")
 
     call = ToolCall(id="1", name="broken", arguments="{}")

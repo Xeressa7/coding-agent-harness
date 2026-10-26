@@ -153,9 +153,10 @@ class Agent:
                     return
 
                 for call in reply.tool_calls:
+                    category, summary = self._tools.describe(call)
                     decision = self.permissions.decide(call)
                     if decision is Decision.ASK:
-                        answer = yield PermissionRequested(call=call)
+                        answer = yield PermissionRequested(call=call, summary=summary)
                         decision = Decision.ALLOW if answer else Decision.DENY
                     if decision is Decision.DENY:
                         result = ToolResult(
@@ -168,18 +169,27 @@ class Agent:
                             call=call,
                             result=result,
                             duration_seconds=0.0,
+                            category=category,
+                            summary=summary,
+                            outcome="izin verilmedi",
                             timestamp=datetime.now(UTC),
                         )
                         continue
-                    yield ToolStarted(call=call, timestamp=datetime.now(UTC))
+                    yield ToolStarted(
+                        call=call, category=category, summary=summary, timestamp=datetime.now(UTC)
+                    )
                     tool_started = perf_counter()
-                    result = await self._tools.call(call)
+                    outcome = await self._tools.execute(call)
                     tool_duration = perf_counter() - tool_started
-                    self.history.append(result)
+                    self.history.append(outcome.result)
                     yield ToolFinished(
                         call=call,
-                        result=result,
+                        result=outcome.result,
                         duration_seconds=tool_duration,
+                        category=category,
+                        summary=summary,
+                        outcome=outcome.summary,
+                        details=outcome.details,
                         timestamp=datetime.now(UTC),
                     )
         except asyncio.CancelledError:

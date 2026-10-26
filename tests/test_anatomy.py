@@ -55,7 +55,15 @@ async def test_raw_preset_offers_the_model_no_tools(tmp_path: Path) -> None:
 
 async def test_files_preset_offers_the_file_tools(tmp_path: Path) -> None:
     names = await offered_tool_names(get_preset("files"), tmp_path)
-    assert names == ["read_file", "write_file", "edit_file", "search"]
+    assert names == [
+        "read_file",
+        "list_dir",
+        "search",
+        "write_file",
+        "edit_file",
+        "delete_file",
+        "update_plan",
+    ]
 
 
 async def test_bash_preset_adds_only_bash_on_top_of_files(tmp_path: Path) -> None:

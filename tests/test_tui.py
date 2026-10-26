@@ -1,6 +1,7 @@
 """Gerçek Textual yerleşimi: sabit editör, bağımsız kaydırma ve async ajan olayları."""
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator, Sequence
 from pathlib import Path
 
@@ -302,10 +303,29 @@ async def test_tool_details_only_in_report_not_chat_or_flow(tmp_path: Path) -> N
         shown = "\n".join(c.source for c in app.query(ChatMessage))
         shown += "\n".join(str(s.render()) for s in app.query("#flow Static"))
         assert "PRIVATE_PATH" not in shown and "PRIVATE_TOOL_RESULT" not in shown
-        assert "read_file" in shown
+        # Yol yok ama ne olduğu var: araç ve sonucun özeti.
+        assert "✓ read_file · 1 satır" in shown
         assert app.report is not None
         html = app.report.read_text(encoding="utf-8")
         assert "PRIVATE_PATH" in html and "PRIVATE_TOOL_RESULT" in html
+
+
+async def test_plan_progress_shows_in_the_flow(tmp_path: Path) -> None:
+    steps = [
+        {"step": "Oku", "status": "completed"},
+        {"step": "Düzelt", "status": "in_progress"},
+        {"step": "Test et", "status": "pending"},
+    ]
+    plan = ToolCall(id="p1", name="update_plan", arguments=json.dumps({"steps": steps}))
+    model = ScriptedLLM([AssistantMessage(tool_calls=(plan,)), AssistantMessage(text="Tamam.")])
+    app = make_app(model, tmp_path)
+    async with app.run_test() as pilot:
+        await app.submit("planla")
+        await app.wait_turn()
+        await pilot.pause()
+        flow = "\n".join(str(s.render()) for s in app.query("#flow Static"))
+    assert "update_plan · 1/3 tamam · şimdi: Düzelt" in flow
+    assert "PLAN" in flow and "▸ Düzelt" in flow and "✓ Oku" in flow
 
 
 async def test_scrolling_is_independent_editor_fixed_and_new_text_does_not_steal_position(

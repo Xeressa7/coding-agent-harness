@@ -54,6 +54,9 @@ def test_chat_preserves_history_and_hides_tool_details(
     )
     assert "TOOL_RESULT_SECRET" not in result.output
     assert "INTERMEDIATE_EXPLANATION" not in result.output
+    # Araçla ne yapıldığı tek satırda görünür; yol ve içerik görünmez.
+    assert "✓ read_file · 1 satır" in result.output
+    assert "a.txt" not in result.output
     assert "Henüz rapor yok" in result.output
     assert len(opened) == 1 and opened[0].startswith("file:")
     assert [m.text for m in model.received[-1] if isinstance(m, UserMessage)] == [

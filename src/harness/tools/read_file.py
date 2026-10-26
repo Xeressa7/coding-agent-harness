@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from harness.tools.base import Tool, ToolError, resolve_inside
+from harness.tools.base import Tool, ToolError, ToolOutput, resolve_inside
 
 
 class ReadFileParams(BaseModel):
@@ -17,11 +17,17 @@ class ReadFile(Tool[ReadFileParams]):
     name = "read_file"
     description = "Bir metin dosyasını satır numaralarıyla okur."
     params_model = ReadFileParams
+    category = "read"
 
     def __init__(self, root: Path) -> None:
         self._root = root.resolve()
 
-    async def run(self, params: ReadFileParams) -> str:
+    def describe(self, params: ReadFileParams) -> str:
+        if params.start_line or params.end_line:
+            return f"{params.path} · satır {params.start_line or 1}–{params.end_line or 'son'}"
+        return params.path
+
+    async def run(self, params: ReadFileParams) -> ToolOutput:
         path = resolve_inside(self._root, params.path)
         if not path.is_file():
             raise ToolError(f"{params.path}: böyle bir dosya yok.")
@@ -33,7 +39,13 @@ class ReadFile(Tool[ReadFileParams]):
         start = params.start_line or 1
         end = params.end_line or len(lines)
         width = len(str(end))
-        return "\n".join(
-            f"{number:>{width}}  {line}"
-            for number, line in enumerate(lines[start - 1 : end], start=start)
+        shown = lines[start - 1 : end]
+        content = "\n".join(
+            f"{number:>{width}}  {line}" for number, line in enumerate(shown, start=start)
+        )
+        partial = f" / {len(lines)}" if len(shown) < len(lines) else ""
+        return ToolOutput(
+            content,
+            summary=f"{len(shown)} satır{partial}",
+            details={"path": params.path, "lines": len(shown), "total_lines": len(lines)},
         )

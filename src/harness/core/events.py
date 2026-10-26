@@ -1,7 +1,7 @@
 """Çekirdek → ön yüz sözleşmesi; JSONL'de eski kayıtlar da okunabilir."""
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -68,18 +68,30 @@ class PermissionRequested(_Event):
 
     kind: Literal["permission_requested"] = "permission_requested"
     call: ToolCall
+    summary: str = ""  # aracın kendi anlatımı: "notes.txt", "$ pytest -q"
 
 
 class ToolStarted(_Event):
+    """Araç çalışmaya başladı. `category` ve `summary` telemetri içindir, modele gitmez."""
+
     kind: Literal["tool_started"] = "tool_started"
     call: ToolCall
+    category: str | None = None  # read, search, write, exec, network, plan; eski kayıtta None
+    summary: str = ""  # ne yapacak: "README.md · satır 1–40"
 
 
 class ToolFinished(_Event):
+    """Araç bitti. `outcome` sonucun kısa özeti ("40 satır", "çıkış kodu 1"),
+    `details` aracın ölçümleri (satır, bayt, çıkış kodu, plan adımları...)."""
+
     kind: Literal["tool_finished"] = "tool_finished"
     call: ToolCall
     result: ToolResult
     duration_seconds: float | None = Field(default=None, ge=0)
+    category: str | None = None
+    summary: str = ""
+    outcome: str = ""
+    details: dict[str, Any] = {}
 
 
 class CodeBlocksSaved(_Event):
