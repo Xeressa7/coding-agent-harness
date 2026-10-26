@@ -191,6 +191,8 @@ async def test_events_carry_category_summary_and_outcome_for_the_timeline(projec
 
     asked = [e for e in events if isinstance(e, PermissionRequested)]
     assert [(e.call.name, e.summary) for e in asked] == [("write_file", "not.txt")]
+    # Zaman çizelgesi izin beklemesini bu damgadan çizer.
+    assert all(e.timestamp is not None for e in asked)
     started = [e for e in events if isinstance(e, ToolStarted)]
     assert [(e.call.name, e.category, e.summary) for e in started] == [
         ("list_dir", "read", ". · derinlik 2")

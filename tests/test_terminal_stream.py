@@ -145,7 +145,8 @@ async def test_first_text_visible_before_http_completion_and_final_not_duplicate
     assert [e.text for e in events if isinstance(e, ModelTextDelta)] == ["Mer", "haba 🌱"]
     (report,) = tmp_path.glob("*.html")
     html = report.read_text(encoding="utf-8")
-    assert html.count("Merhaba 🌱") == 1
+    # Cevap iki görünümde: adım kartı ve (kapalı) ham kayıt. Akış parçaları ayrıca basılmaz.
+    assert html.count("Merhaba 🌱") == 2
     assert "Kısmi model metni" not in html
 
 

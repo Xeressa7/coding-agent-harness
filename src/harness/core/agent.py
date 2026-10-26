@@ -156,7 +156,9 @@ class Agent:
                     category, summary = self._tools.describe(call)
                     decision = self.permissions.decide(call)
                     if decision is Decision.ASK:
-                        answer = yield PermissionRequested(call=call, summary=summary)
+                        answer = yield PermissionRequested(
+                            call=call, summary=summary, timestamp=datetime.now(UTC)
+                        )
                         decision = Decision.ALLOW if answer else Decision.DENY
                     if decision is Decision.DENY:
                         result = ToolResult(

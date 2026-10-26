@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from html import escape
 from pathlib import Path
 
+from harness.cli.timeline import build_turns, render_turn
 from harness.core.events import (
     CodeBlocksSaved,
     ContextAssembled,
@@ -172,17 +173,15 @@ def _event_html(event: Event) -> str:
 
 
 def render_report(events: Sequence[Event], source: str) -> str:
+    """Her tur için okunur zaman çizelgesi; en altta ham olay kaydının tamamı (kapalı)."""
     turns: list[list[Event]] = []
     for event in events:
         if isinstance(event, TaskStarted) or not turns:
             turns.append([])
         turns[-1].append(event)
+    views = build_turns(list(events))
     sections: list[str] = []
-    for number, turn in enumerate(turns, start=1):
-        start = next((e for e in turn if isinstance(e, TaskStarted)), None)
-        prompt = start.task if start else "Görev başlangıcı kayıtta yok"
-        model = start.model if start and start.model else "—"
-        effort = start.effort if start and start.effort else "—"
+    for number, (turn, view) in enumerate(zip(turns, views, strict=False), start=1):
         metrics = "".join(
             f"<div><dt>{escape(label)}</dt><dd>{escape(value)}</dd></div>"
             for label, value in summary_items(turn)
@@ -192,14 +191,13 @@ def render_report(events: Sequence[Event], source: str) -> str:
             e for e in turn if not isinstance(e, ModelTextDelta) or e.step not in completed_steps
         ]
         sections.append(
-            f"<section aria-labelledby='turn-{number}'>"
+            f"<section class='turn' aria-labelledby='turn-{number}'>"
             f"<h2 id='turn-{number}'>Tur {number}</h2>"
-            f"<p class='prompt'>{escape(prompt)}</p>"
-            f"<p>Model: <strong>{escape(model)}</strong> · Effort: {escape(effort)}</p>"
-            f"<dl class='metrics'>{metrics}</dl>"
-            "<h3>İşlem kaydı</h3><ol>"
+            + render_turn(view)
+            + "<details class='raw'><summary>Ham olay kaydı ve ölçümler "
+            f"({len(visible)} olay)</summary><dl class='metrics'>{metrics}</dl><ol>"
             + "".join(_event_html(e) for e in visible)
-            + "</ol></section>"
+            + "</ol></details></section>"
         )
     content = "".join(sections) if sections else "<p>Bu kayıtta henüz olay yok.</p>"
     css = Path(__file__).with_name("inspector.css").read_text(encoding="utf-8")
@@ -209,22 +207,21 @@ def render_report(events: Sequence[Event], source: str) -> str:
         '<meta http-equiv="Content-Security-Policy" '
         'content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; '
         'base-uri &#39;none&#39;; form-action &#39;none&#39;">'
-        f"<title>Harness · Oturum incelemesi</title><style>{css}</style></head>"
+        f"<title>Koşu incelemesi</title><style>{css}</style></head>"
         '<body><a class="skip" href="#main">Kayda geç</a><main id="main">'
-        '<header><p class="eyebrow">HARNESS / GÖREV SONRASI</p>'
-        "<h1>Oturum incelemesi</h1>"
+        '<header><p class="eyebrow">HARNESS / KOŞU İNCELEMESİ</p>'
+        "<h1>Koşu incelemesi</h1>"
         f'<p class="source">{escape(source)}</p>'
-        "<p>Yerel kayıt; istemler ve dosya içerikleri hassas bilgi içerebilir. "
+        "<p class='sub'>Yerel kayıt; istemler ve dosya içerikleri hassas bilgi içerebilir. "
         "Paylaşmadan önce kontrol edin.</p></header>"
         f"{content}<footer><h2>Ölçümler nasıl okunur?</h2>"
-        "<p>—: ölçülmedi veya tam toplam için veri eksik. Ortalama token/sn = çıktı "
-        "tokenı / toplam model çağrısı süresi; saf üretim hızı değildir. "
-        "Model süresi ağ ve sağlayıcı beklemesini de içerir. "
-        "İlk metin süresi ilk boş olmayan metin parçasına kadardır; araç-only yanıtta yoktur.</p>"
-        "<p>Cache ve reasoning tokenları alt kümedir, toplam tokenlara tekrar eklenmez. "
-        "Reasoning sayımı iç düşünce metni değildir. Bu ekran yalnız gözlemlenebilir "
-        "açıklama, çağrı ve sonuçları gösterir. Tamamlandı, model döngüsünün sona "
-        "erdiğini belirtir; testlerin geçtiğini garanti etmez.</p>"
+        "<p>—: ölçülmedi veya tam toplam için veri eksik. Model süresi ağ ve sağlayıcı "
+        "beklemesini de içerir. İlk kelime süresi ilk boş olmayan metin parçasına kadardır; "
+        "yalnız araç isteyen yanıtta yoktur.</p>"
+        "<p>Önbellek ve düşünme tokenları alt kümedir, toplamlara tekrar eklenmez. Düşünce "
+        "özeti sağlayıcının verdiği özettir; modelin iç düşüncesinin kendisi değildir. ≈ ile "
+        "yazılan dosya tokenları tahmindir. Tamamlandı, model döngüsünün sona erdiğini "
+        "belirtir; testlerin geçtiğini garanti etmez.</p>"
         "</footer></main></body></html>"
     )
 
