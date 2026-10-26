@@ -322,7 +322,11 @@ class ChatGPTTokens:
             },
         )
         if response.status_code != 200:
-            raise _token_error(response)
+            error = _token_error(response)
+            if response.status_code in {400, 401}:
+                # Yenileme belirteci geçersiz/eskimiş: tek çare yeniden giriş.
+                raise AuthError(f"{error} — oturumun süresi dolmuş; yeniden giriş: harness login")
+            raise error
         credentials = apply_token_response(credentials, response.json())
         save_credentials(credentials, self._path)
         return credentials

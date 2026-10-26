@@ -142,3 +142,20 @@ async def test_model_list_uses_declared_efforts_or_provider_defaults() -> None:
         ("deepseek-flash", ["low", "max"], "low"),
         ("plain", ["medium"], None),
     ]
+
+
+async def test_provider_error_message_and_unreachable_server_are_readable() -> None:
+    body = json.dumps({"error": {"message": "Insufficient Balance", "type": "x"}})
+    async with api(body, status=402) as http:
+        with pytest.raises(ChatCompletionsError) as caught:
+            await StreamingChatCompletionsLLM(URL, "m", http).complete([UserMessage(text="x")])
+    assert str(caught.value) == "HTTP 402: Insufficient Balance"
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("All connection attempts failed", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(refuse)) as http:
+        with pytest.raises(ChatCompletionsError, match="localhost:11434.*çalışıyor mu"):
+            await StreamingChatCompletionsLLM("http://localhost:11434/v1", "m", http).complete(
+                [UserMessage(text="x")]
+            )

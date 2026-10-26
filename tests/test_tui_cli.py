@@ -24,18 +24,22 @@ def test_interactive_chat_routes_to_tui(tmp_path: Path, monkeypatch: pytest.Monk
             stdout=SimpleNamespace(isatty=lambda: True),
         ),
     )
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, bool]] = []
 
-    def launch(make_session: Callable[[object], ChatSession]) -> Path:
+    def launch(make_session: Callable[[object], ChatSession], *, resume: bool = False) -> Path:
         session = make_session(object())
-        calls.append((session.model, session.anatomy.name))
+        calls.append((session.model, session.anatomy.name, resume))
         assert session.root == tmp_path and session.system_prompt
         return session.log.path
 
     monkeypatch.setattr(tui, "run_tui", launch)
-    result = CliRunner().invoke(cli.app, ["chat", "--model", "test-model", "--anatomy", "raw"])
+    runner = CliRunner()
+    result = runner.invoke(cli.app, ["chat", "--model", "test-model", "--anatomy", "raw"])
     assert result.exit_code == 0, result.output
-    assert calls == [("test-model", "raw")]
+    # Standart biçim: komutsuz `harness` sohbet açar, -c son oturuma devam eder.
+    result = runner.invoke(cli.app, ["-m", "m2", "-c"])
+    assert result.exit_code == 0, result.output
+    assert calls == [("test-model", "raw", False), ("m2", "files", True)]
 
 
 def test_plain_bypasses_fullscreen_even_in_interactive_terminal(
@@ -59,7 +63,7 @@ def test_plain_bypasses_fullscreen_even_in_interactive_terminal(
     def forbidden(*args: object) -> None:
         raise AssertionError("--plain must not open fullscreen")
 
-    monkeypatch.setattr(cli, "ResponsesLLM", factory)
+    monkeypatch.setattr(cli, "make_llm", factory)
     monkeypatch.setattr(tui, "run_tui", forbidden)
     result = CliRunner().invoke(cli.app, ["chat", "--plain"], input="selam\n/exit\n")
     assert result.exit_code == 0, result.output

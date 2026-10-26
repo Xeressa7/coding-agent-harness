@@ -77,13 +77,16 @@ class ChatCompletionsLLM:
     async def complete(
         self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
     ) -> AssistantMessage:
-        response = await self._http.post(
-            f"{self._base_url}/chat/completions",
-            json=self._body(history, tools),
-            headers=self._headers(),
-        )
+        try:
+            response = await self._http.post(
+                f"{self._base_url}/chat/completions",
+                json=self._body(history, tools),
+                headers=self._headers(),
+            )
+        except httpx.TransportError as e:
+            raise _unreachable(self._base_url, e) from e
         if response.status_code != 200:
-            raise ChatCompletionsError(f"HTTP {response.status_code}: {response.text[:500]}")
+            raise _http_error(response)
         return parse_response(response.json(), source=self._base_url)
 
 
@@ -111,38 +114,42 @@ class StreamingChatCompletionsLLM(ChatCompletionsLLM):
         calls: dict[int, dict[str, str]] = {}
         usage: TokenUsage | None = None
         received = False
-        async with self._http.stream(
-            "POST", f"{self._base_url}/chat/completions", json=body, headers=self._headers()
-        ) as response:
-            if response.status_code != 200:
-                await response.aread()
-                raise ChatCompletionsError(f"HTTP {response.status_code}: {response.text[:500]}")
-            async for chunk in _events(response):
-                received = True
-                if chunk.get("error"):
-                    raise ChatCompletionsError(f"Akış hatası: {chunk['error']}")
-                if chunk.get("usage"):
-                    usage = _usage(chunk["usage"])
-                choices: list[dict[str, Any]] = chunk.get("choices") or []
-                for choice in choices:
-                    delta: dict[str, Any] = choice.get("delta") or {}
-                    if piece := _reasoning_of(delta):
-                        reasoning.append(piece)
-                    text: str = delta.get("content") or ""
-                    if text:
-                        if first_text_seconds is None:
-                            first_text_seconds = perf_counter() - started
-                        texts.append(text)
-                        yield TextDelta(text=text)
-                    raw_calls: list[dict[str, Any]] = delta.get("tool_calls") or []
-                    for raw in raw_calls:
-                        # Bir çağrı birkaç parçada gelir; `index` parçaları aynı çağrıda toplar.
-                        index: int = raw.get("index", len(calls))
-                        slot = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
-                        function: dict[str, Any] = raw.get("function") or {}
-                        slot["id"] = raw.get("id") or slot["id"]
-                        slot["name"] += function.get("name") or ""
-                        slot["arguments"] += function.get("arguments") or ""
+        url = f"{self._base_url}/chat/completions"
+        try:
+            async with self._http.stream(
+                "POST", url, json=body, headers=self._headers()
+            ) as response:
+                if response.status_code != 200:
+                    await response.aread()
+                    raise _http_error(response)
+                async for chunk in _events(response):
+                    received = True
+                    if chunk.get("error"):
+                        raise ChatCompletionsError(f"Akış hatası: {chunk['error']}")
+                    if chunk.get("usage"):
+                        usage = _usage(chunk["usage"])
+                    choices: list[dict[str, Any]] = chunk.get("choices") or []
+                    for choice in choices:
+                        delta: dict[str, Any] = choice.get("delta") or {}
+                        if piece := _reasoning_of(delta):
+                            reasoning.append(piece)
+                        text: str = delta.get("content") or ""
+                        if text:
+                            if first_text_seconds is None:
+                                first_text_seconds = perf_counter() - started
+                            texts.append(text)
+                            yield TextDelta(text=text)
+                        raw_calls: list[dict[str, Any]] = delta.get("tool_calls") or []
+                        for raw in raw_calls:
+                            # Bir çağrı birkaç parçada gelir; `index` onları aynı çağrıda toplar.
+                            index: int = raw.get("index", len(calls))
+                            slot = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                            function: dict[str, Any] = raw.get("function") or {}
+                            slot["id"] = raw.get("id") or slot["id"]
+                            slot["name"] += function.get("name") or ""
+                            slot["arguments"] += function.get("arguments") or ""
+        except httpx.TransportError as e:
+            raise _unreachable(self._base_url, e) from e
         if not received:
             raise ChatCompletionsError("Akış, cevap gelmeden kapandı.")
         thought = "".join(reasoning)
@@ -283,6 +290,24 @@ async def list_chat_models(
             )
         )
     return models
+
+
+def _http_error(response: httpx.Response) -> ChatCompletionsError:
+    """Sağlayıcının hata mesajı varsa onu, yoksa gövdenin başını gösterir."""
+    try:
+        body: Any = response.json()
+        error: Any = body.get("error") if isinstance(body, dict) else None
+        message = error.get("message") if isinstance(error, dict) else error
+    except ValueError:
+        message = None
+    detail = str(message) if message else response.text[:500]
+    return ChatCompletionsError(f"HTTP {response.status_code}: {detail}")
+
+
+def _unreachable(base_url: str, error: httpx.TransportError) -> ChatCompletionsError:
+    return ChatCompletionsError(
+        f"{base_url} bağlantı hatası ({type(error).__name__}: {error}). Sunucu çalışıyor mu?"
+    )
 
 
 def _usage(raw: dict[str, Any]) -> TokenUsage:

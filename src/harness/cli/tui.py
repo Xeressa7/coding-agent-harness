@@ -19,7 +19,7 @@ from textual.widgets import Button, Markdown, Static, TextArea
 from textual.widgets.markdown import MarkdownStream
 from textual.worker import Worker, WorkerCancelled
 
-from harness.cli.commands import ChatSession, is_command
+from harness.cli.commands import ChatSession, CommandReply, is_command
 from harness.cli.inspector import code_blocks_summary, seconds, summary_items, write_report
 from harness.cli.render import PermissionChoice
 from harness.core.agent import Agent
@@ -38,6 +38,19 @@ from harness.core.events import (
 )
 from harness.core.session_log import SessionLogger
 from harness.messages import ToolCall
+
+# İş sürerken de çalışabilen, yalnız bilgi veren komutlar.
+READ_ONLY_COMMANDS = {
+    "/help",
+    "/sessions",
+    "/inspect",
+    "/exit",
+    "/quit",
+    "/status",
+    "/tools",
+    "/usage",
+    "/cost",
+}
 
 
 class ComposeInput(TextArea):
@@ -132,10 +145,17 @@ class HarnessApp(App[None]):
         Binding("ctrl+t", "toggle_theme", "Tema", priority=True),
     ]
 
-    def __init__(self, session: ChatSession, *, initial_task: str | None = None) -> None:
+    def __init__(
+        self,
+        session: ChatSession,
+        *,
+        initial_task: str | None = None,
+        initial_reply: CommandReply | None = None,
+    ) -> None:
         super().__init__()
         self.session = session
         self.initial_task = initial_task
+        self.initial_reply = initial_reply
         self.busy = False
         self.failed = False
         self.report: Path | None = None
@@ -209,7 +229,7 @@ class HarnessApp(App[None]):
                             "Mesajını aşağıya yaz. Yanıtlar burada akar; "
                             "işlem durumu sağda kalır.\n"
                             "Yukarı kaydırdığında okuduğun yer korunur.\n"
-                            "/help: model, effort ve oturum komutları."
+                            "/help: sağlayıcı, model, effort, anatomi ve oturum komutları."
                         ),
                         id="welcome",
                     )
@@ -239,6 +259,8 @@ class HarnessApp(App[None]):
         self.query_one("#conversation", VerticalScroll).anchor()
         self.query_one("#flow", VerticalScroll).anchor()
         self.query_one(ComposeInput).focus()
+        if self.initial_reply is not None:  # harness -c: önceki oturum ekrana gelir
+            await self.show_reply(self.initial_reply)
         if self.initial_task:
             await self.submit(self.initial_task)
 
@@ -312,7 +334,7 @@ class HarnessApp(App[None]):
 
     async def run_command(self, text: str) -> None:
         name = text.split()[0].lower()
-        if self.busy and name not in {"/help", "/sessions", "/inspect", "/exit"}:
+        if self.busy and name not in READ_ONLY_COMMANDS:
             self.set_status("Görev sürüyor; komut için bitmesini bekle ya da Esc.")
             return
         self.query_one(ComposeInput).clear()
@@ -324,6 +346,9 @@ class HarnessApp(App[None]):
         if reply.inspect:
             self.action_inspect()
             return
+        await self.show_reply(reply)
+
+    async def show_reply(self, reply: CommandReply) -> None:
         if reply.reset:
             await self.reset_conversation(reply.transcript)
         if reply.text:
@@ -535,13 +560,16 @@ class HarnessApp(App[None]):
             self.set_status("Henüz inceleme raporu yok.")
 
 
-def run_tui(make_session: Callable[[httpx.AsyncClient], ChatSession]) -> Path:
+def run_tui(
+    make_session: Callable[[httpx.AsyncClient], ChatSession], *, resume: bool = False
+) -> Path:
     """Tam ekran sohbeti açar; kapanınca son kullanılan kayıt dosyasının yolunu döner."""
 
     async def run() -> Path:
         async with httpx.AsyncClient(timeout=120) as http:
             session = make_session(http)
-            await HarnessApp(session).run_async()
+            reply = session.resume_latest() if resume else None
+            await HarnessApp(session, initial_reply=reply).run_async()
             return session.log.path
 
     return asyncio.run(run())

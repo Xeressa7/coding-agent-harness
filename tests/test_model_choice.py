@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 from harness.cli import app as cli
 from harness.core.config import Settings, load_settings, save_settings
 from harness.llm.base import Effort, ModelInfo
+from harness.llm.providers import Provider
 from harness.llm.responses import build_request, list_models, parse_output
 from harness.messages import UserMessage
 
@@ -87,39 +88,106 @@ MODELS = [
 
 
 @pytest.fixture
-def saved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    path = tmp_path / "settings.json"
-    monkeypatch.setattr(cli, "fetch_models", lambda: MODELS)
-    monkeypatch.setattr(cli, "load_settings", lambda: load_settings(path))
+def saved(settings_file: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """CLI'nin model listesi sabit; ayar dosyası conftest'teki geçici dosya."""
 
-    def save(settings: Settings) -> None:
-        save_settings(settings, path)
+    def fetch(provider: Provider) -> list[ModelInfo]:
+        return MODELS
 
-    monkeypatch.setattr(cli, "save_settings", save)
-    return path
+    monkeypatch.setattr(cli, "fetch_models", fetch)
+    return settings_file
 
 
-def test_menu_saves_picked_model_and_effort(saved: Path) -> None:
-    result = CliRunner().invoke(cli.app, ["model"], input="1\n2\n")
+def test_model_menu_picks_only_the_model_and_keeps_a_valid_effort(saved: Path) -> None:
+    save_settings(Settings(model="gpt-6-luna", effort="low"), saved)
 
-    assert result.exit_code == 0, result.output
-    assert "GPT-6-Astra" in result.output and "GPT-6-Luna" in result.output
-    assert load_settings(saved) == Settings(model="gpt-6-astra", effort="high")
-
-
-def test_pressing_enter_keeps_current_model_and_suggests_its_default_effort(saved: Path) -> None:
-    # Kayıt yok → şu anki model luna; Enter luna'yı, ikinci Enter önerilen effort'u seçer.
-    result = CliRunner().invoke(cli.app, ["model"], input="\n\n")
+    result = CliRunner().invoke(cli.app, ["model"], input="1\n")
 
     assert result.exit_code == 0, result.output
+    assert "GPT-6-Astra" in result.output and "ne kadar" not in result.output
+    # Astra'da da "low" var: effort korunur, ayrıca sorulmaz.
+    assert load_settings(saved).model == "gpt-6-astra"
+    assert load_settings(saved).effort == "low"
+    assert load_settings(saved).models == {"chatgpt": "gpt-6-astra"}
+
+
+def test_model_by_name_drops_an_effort_the_new_model_lacks(saved: Path) -> None:
+    save_settings(Settings(model="gpt-6-astra", effort="high"), saved)
+
+    result = CliRunner().invoke(cli.app, ["model", "gpt-6-luna"])
+
+    assert result.exit_code == 0, result.output
+    assert (load_settings(saved).model, load_settings(saved).effort) == ("gpt-6-luna", None)
+    assert CliRunner().invoke(cli.app, ["model", "yok"]).exit_code == 1
+
+
+def test_effort_is_chosen_separately_and_can_return_to_default(saved: Path) -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(cli.app, ["effort"], input="9\n3\n")  # geçersiz numara tekrar sorulur
+    assert result.exit_code == 0, result.output
+    assert "varsayılan" in result.output
     assert load_settings(saved) == Settings(model="gpt-6-luna", effort="medium")
 
+    assert runner.invoke(cli.app, ["effort", "low"]).exit_code == 0
+    assert load_settings(saved).effort == "low"
+    assert runner.invoke(cli.app, ["effort", "varsayılan"]).exit_code == 0
+    assert load_settings(saved).effort is None
+    assert runner.invoke(cli.app, ["effort", "ultra"]).exit_code == 1
+    assert load_settings(saved).model == "gpt-6-luna"  # effort komutu modele dokunmaz
 
-def test_invalid_number_is_asked_again(saved: Path) -> None:
-    result = CliRunner().invoke(cli.app, ["model"], input="9\n2\n1\n")
+
+def test_provider_switch_remembers_each_providers_last_model(saved: Path) -> None:
+    runner = CliRunner()
+    save_settings(Settings(model="gpt-6-sol", effort="high"), saved)
+
+    assert runner.invoke(cli.app, ["provider", "anthropic"]).exit_code == 0
+    settings = load_settings(saved)
+    assert (settings.provider, settings.model, settings.effort) == (
+        "anthropic",
+        "claude-opus-5-5",
+        None,
+    )
+
+    assert runner.invoke(cli.app, ["provider", "chatgpt"]).exit_code == 0
+    assert load_settings(saved).model == "gpt-6-sol"  # chatgpt'de son kullanılan
+    assert runner.invoke(cli.app, ["provider", "yok"]).exit_code == 1
+
+
+def test_flags_override_saved_choices_for_one_run(saved: Path) -> None:
+    save_settings(Settings(provider="chatgpt", model="gpt-6-sol", effort="high"), saved)
+
+    config = cli.resolve_config("deepseek", None, None, "bash")
+    assert (config.provider.name, config.model, config.effort, config.anatomy.name) == (
+        "deepseek",
+        "deepseek-flash",
+        None,
+        "bash",
+    )
+    same = cli.resolve_config(None, None, None, None)
+    assert (same.model, same.effort, same.anatomy.name) == ("gpt-6-sol", "high", "files")
+    assert cli.resolve_config(None, None, "varsayılan", None).effort is None
+
+
+def test_anatomy_default_is_saved(saved: Path) -> None:
+    assert CliRunner().invoke(cli.app, ["anatomy", "raw"]).exit_code == 0
+    assert load_settings(saved).anatomy == "raw"
+    assert cli.resolve_config(None, None, None, None).anatomy.name == "raw"
+    assert CliRunner().invoke(cli.app, ["anatomy", "yok"]).exit_code != 0
+
+
+def test_status_and_providers_show_readiness_without_network(saved: Path) -> None:
+    result = CliRunner().invoke(cli.app, ["status"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
-    assert load_settings(saved) == Settings(model="gpt-6-luna", effort="low")
+    for name in ("chatgpt", "anthropic", "ollama", "deepseek"):
+        assert name in result.output
+    assert "ANTHROPIC_API_KEY" in result.output or "anahtar var" in result.output
+
+
+def test_version_flag() -> None:
+    result = CliRunner().invoke(cli.app, ["--version"])
+    assert result.exit_code == 0 and result.output.startswith("harness")
 
 
 def test_reasoning_summary_is_read_from_reasoning_items() -> None:

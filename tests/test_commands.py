@@ -20,7 +20,8 @@ from harness.core.session_log import (
     list_sessions,
     read_session,
 )
-from harness.llm.responses import Effort, ModelInfo
+from harness.llm.base import Effort, ModelInfo
+from harness.llm.providers import Provider, ProviderError, get_provider
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import (
     AssistantMessage,
@@ -69,21 +70,22 @@ def make_session(tmp_path: Path) -> tuple[ChatSession, list[tuple[str, str | Non
     built: list[tuple[str, str | None]] = []
     seen: list[tuple[Message, ...]] = []
 
-    def make_llm(name: str, effort: str | None) -> EchoModel:
+    def make_llm(provider: Provider, name: str, effort: str | None) -> EchoModel:
         built.append((name, effort))
         return EchoModel(name, effort, seen)
 
-    async def load_models() -> list[ModelInfo]:
+    async def load_models(provider: Provider) -> list[ModelInfo]:
         return MODELS
 
     session = ChatSession(
         root=tmp_path,
         anatomy=get_preset("files"),
-        system_prompt="talimat",
+        provider=get_provider("chatgpt"),
         model="luna",
         effort=None,
         make_llm=make_llm,
         load_models=load_models,
+        load_prompt=lambda anatomy: f"talimat:{anatomy.name}",
         sessions_dir=tmp_path / "logs",
     )
     return session, built
@@ -132,7 +134,7 @@ async def test_model_switch_keeps_history_and_next_turn_records_new_model(tmp_pa
 
     assert "high" in (await session.run("/effort")).text
     await session.run("/effort high")
-    assert session.label == "sol · effort: high"
+    assert session.label == "sol · effort: high · chatgpt"
     assert built[-1] == ("sol", "high")
     started = [e for e in read_session(session.log.path) if isinstance(e, TaskStarted)]
     assert [(e.model, e.effort) for e in started] == [("luna", None), ("sol", None)]
@@ -144,21 +146,22 @@ async def test_bad_choices_change_nothing(tmp_path: Path) -> None:
     assert "yok" in (await session.run("/effort high")).text  # luna'da high yok
     assert "yok" in (await session.run("/model 9")).text
     assert "Bilinmeyen" in (await session.run("/uçur")).text
-    assert session.label == "luna · effort: varsayılan" and len(built) == 1
+    assert session.label == "luna · effort: varsayılan · chatgpt" and len(built) == 1
 
 
 async def test_model_list_failure_is_reported_not_raised(tmp_path: Path) -> None:
-    async def offline() -> list[ModelInfo]:
+    async def offline(provider: Provider) -> list[ModelInfo]:
         raise RuntimeError("ağ yok")
 
     session = ChatSession(
         root=tmp_path,
         anatomy=get_preset("files"),
-        system_prompt="talimat",
+        provider=get_provider("chatgpt"),
         model="luna",
         effort=None,
-        make_llm=lambda name, effort: ScriptedLLM([]),
+        make_llm=lambda provider, name, effort: ScriptedLLM([]),
         load_models=offline,
+        load_prompt=lambda anatomy: "talimat",
         sessions_dir=tmp_path / "logs",
     )
     assert "ağ yok" in (await session.run("/model")).text
@@ -261,14 +264,14 @@ def test_plain_chat_model_command_switches_model(
     monkeypatch.chdir(tmp_path)
     used: list[str] = []
 
-    def factory(tokens: object, model: str, http: object, effort: str | None) -> ScriptedLLM:
+    def factory(provider: object, model: str, effort: str | None, http: object) -> ScriptedLLM:
         used.append(model)
         return ScriptedLLM([AssistantMessage(text=f"cevap-{model}")])
 
-    async def models(tokens: object, http: object) -> list[ModelInfo]:
+    async def models(provider: object, http: object) -> list[ModelInfo]:
         return MODELS
 
-    monkeypatch.setattr(cli, "ResponsesLLM", factory)
+    monkeypatch.setattr(cli, "make_llm", factory)
     monkeypatch.setattr(cli, "list_models", models)
     result = CliRunner().invoke(
         cli.app,
@@ -279,3 +282,82 @@ def test_plain_chat_model_command_switches_model(
     assert "/resume" in result.output  # yardım tablosu
     assert "cevap-sol" in result.output
     assert used == ["luna", "sol"]
+
+
+async def test_provider_switch_keeps_history_and_refuses_an_unusable_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session, built = make_session(tmp_path)
+    await turn(session, "ilk")
+
+    listing = await session.run("/provider")
+    assert "chatgpt" in listing.text and "anthropic" in listing.text
+
+    reply = await session.run("/provider anthropic")
+    assert session.provider.name == "anthropic" and session.model == "claude-opus-5-5"
+    assert "geçmiş korundu" in reply.text
+    users = [m.text for m in session.agent.history if isinstance(m, UserMessage)]
+    assert users == ["ilk"]
+    # Geri dönünce o sağlayıcıda kullanılan model hatırlanır.
+    await session.run("/provider chatgpt")
+    assert session.model == "luna"
+
+    def no_key(provider: Provider, name: str, effort: str | None) -> EchoModel:
+        raise ProviderError("OPENROUTER_API_KEY tanımlı değil")
+
+    session._make_llm = no_key  # pyright: ignore[reportPrivateUsage]
+    refused = await session.run("/provider openrouter")
+    assert "kullanılamıyor" in refused.text and session.provider.name == "chatgpt"
+    assert "yok" in (await session.run("/provider uçak")).text
+    assert built  # ilk kurulum yapıldı
+
+
+async def test_anatomy_switch_changes_tools_prompt_and_resets_grants(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    session.permissions.grant("write_file")
+
+    reply = await session.run("/anatomy raw")
+
+    assert "raw" in reply.text and session.tools.specs() == []
+    assert session.agent.history[0].text == "talimat:raw"  # type: ignore[union-attr]
+    assert "araç yok" in (await session.run("/tools")).text
+    await session.run("/anatomy bash")
+    assert "bash" in [s.name for s in session.tools.specs()]
+    assert (
+        session.permissions.decide(
+            ToolCall(id="w", name="write_file", arguments='{"path": "a", "content": ""}')
+        )
+        is Decision.ASK
+    )
+    assert "yok" in (await session.run("/anatomy uçuş")).text
+
+
+async def test_tools_status_and_usage_describe_the_session(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    assert "henüz tur yok" in (await session.run("/usage")).text
+
+    tools = (await session.run("/tools")).text
+    assert "| `read_file` |" in tools and "sormadan" in tools and "sorar" in tools
+    await turn(session, "selam")
+    status = (await session.run("/status")).text
+    assert "chatgpt" in status and "`luna`" in status and str(tmp_path) in status
+    usage = (await session.run("/cost")).text  # takma ad
+    assert "Tur / model çağrısı | 1 / 1" in usage
+    assert "Girdi tokenı | —" in usage  # sahte model sayım vermez; 0 yazılmaz
+
+
+async def test_aliases_and_effort_back_to_default(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    await session.run("/effort low")
+    assert session.effort == "low"
+    await session.run("/effort varsayılan")
+    assert session.effort is None
+    assert (await session.run("/quit")).exit
+    cleared = await session.run("/clear")
+    assert cleared.reset
+
+
+async def test_resume_latest_without_sessions_is_a_fresh_start(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    reply = session.resume_latest()
+    assert not reply.reset and "yeni oturum" in reply.text

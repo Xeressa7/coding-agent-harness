@@ -14,7 +14,8 @@ from harness.cli.tui import ChatMessage, ComposeInput, HarnessApp, PermissionDia
 from harness.core.anatomy import get_preset
 from harness.core.events import TaskFinished, TaskStarted
 from harness.core.session_log import read_session
-from harness.llm.responses import ModelInfo
+from harness.llm.base import ModelInfo
+from harness.llm.providers import Provider, get_provider
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage, Message, TextDelta, TokenUsage, ToolCall, ToolSpec
 
@@ -25,17 +26,18 @@ def make_app(model: object, tmp_path: Path) -> HarnessApp:
     # Concrete LLM doubles below satisfy the shared complete/stream protocols.
     assert isinstance(model, (ScriptedLLM, ControlledModel))
 
-    async def no_models() -> list[ModelInfo]:
+    async def no_models(provider: Provider) -> list[ModelInfo]:
         raise RuntimeError("testte model listesi yok")
 
     session = ChatSession(
         root=tmp_path,
         anatomy=get_preset("files"),
-        system_prompt="talimat",
+        provider=get_provider("chatgpt"),
         model="test-model",
         effort=None,
-        make_llm=lambda name, effort: model,
+        make_llm=lambda provider, name, effort: model,
         load_models=no_models,
+        load_prompt=lambda anatomy: "talimat",
         sessions_dir=tmp_path / "logs",
     )
     return HarnessApp(session)

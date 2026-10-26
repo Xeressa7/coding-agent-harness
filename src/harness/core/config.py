@@ -22,6 +22,8 @@ class Settings(BaseModel):
     model: str = "gpt-6-luna"
     effort: str | None = None  # None: modelin kendi varsayılanı
     anatomy: str | None = None  # None: varsayılan anatomi
+    # Sağlayıcıya dönüldüğünde son kullanılan modeli hatırlar: {"anthropic": "claude-opus-5-5"}.
+    models: dict[str, str] = {}
 
 
 def load_settings(path: Path = DEFAULT_SETTINGS_PATH) -> Settings:

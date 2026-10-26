@@ -36,6 +36,12 @@ class PermissionManager:
         self._tools = tools
         self._always_allowed: set[str] = set()
 
+    def policy(self, name: str) -> Decision:
+        """Aracın genel kuralı (yol denetimi hariç): sormadan mı çalışır, sorar mı?"""
+        if name in _READ_ONLY or name in self._always_allowed:
+            return Decision.ALLOW
+        return Decision.ASK
+
     def grant(self, name: str) -> None:
         """Bu araç için kalan oturum boyunca bir daha sorma; DENY yine de kazanır."""
         self._always_allowed.add(name)
