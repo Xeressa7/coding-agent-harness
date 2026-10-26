@@ -76,13 +76,21 @@ class TextDelta(_Record):
 
 
 class AssistantMessage(_Record):
-    """Modelin cevabı: metin, araç istekleri ya da ikisi birden."""
+    """Modelin cevabı: metin, araç istekleri ya da ikisi birden.
+
+    `reasoning` sağlayıcının gösterdiği düşünce metnidir (özet ya da açık düşünce);
+    gizli düşüncenin kendisi değildir ve vermeyen sağlayıcıda boştur.
+    `provider_data` aynı sağlayıcıya sonraki istekte aynen geri gönderilmesi gereken
+    veridir (ör. imzalı düşünce blokları); anlamını yalnız o adaptör bilir.
+    """
 
     role: Literal["assistant"] = "assistant"
     text: str = ""
     tool_calls: tuple[ToolCall, ...] = ()
     usage: TokenUsage | None = None
     first_text_seconds: float | None = Field(default=None, ge=0)
+    reasoning: str = ""
+    provider_data: dict[str, Any] | None = None
 
 
 class ToolResult(_Record):

@@ -17,6 +17,7 @@ class _Event(BaseModel):
 class TaskStarted(_Event):
     kind: Literal["task_started"] = "task_started"
     task: str
+    provider: str | None = None  # None: sağlayıcı kaydı öncesinden kalma oturum (ChatGPT)
     model: str | None = None
     effort: str | None = None
     anatomy: Anatomy | None = None  # None: anatomi kaydı öncesinden kalma oturum
@@ -55,6 +56,7 @@ class ModelReplied(_Event):
     duration_seconds: float | None = Field(default=None, ge=0)
     first_text_seconds: float | None = Field(default=None, ge=0)
     usage: TokenUsage | None = None
+    reasoning: str = ""  # sağlayıcının gösterdiği düşünce özeti; gizli düşünce değildir
 
 
 class PermissionRequested(_Event):

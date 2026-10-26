@@ -128,12 +128,17 @@ async def test_permission_dialog_session_grant_skips_the_second_question(tmp_pat
             await pilot.pause()
             if dialog_open(app):
                 break
+        first = app.screen
         assert dialog_open(app)
-        await pilot.click("#always")
-        # Takılmak yerine başarısız ol: ikinci bir soru açılırsa tur hiç bitmez.
-        for _ in range(50):
+        # Koordinata tıklamak yük altında, pencere yerleşmeden ıskalayabiliyor; düğmenin
+        # kendisine basmak aynı işleyiciyi (on_button_pressed -> dismiss) çalıştırır.
+        first.query_one("#always", Button).press()
+        # Takılmak yerine başarısız ol: ikinci bir soru açılırsa tur hiç bitmez. İlk pencerenin
+        # kapanması da birkaç kare sürer; o hâlâ açıkken "ikinci soru" sayılmaz.
+        for _ in range(100):
             await pilot.pause()
-            if not app.busy or dialog_open(app):
+            second = dialog_open(app) and app.screen is not first
+            if second or (not app.busy and not dialog_open(app)):
                 break
         assert not dialog_open(app)
         assert not app.busy and not app.failed

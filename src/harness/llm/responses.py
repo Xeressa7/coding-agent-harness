@@ -17,8 +17,8 @@ from time import perf_counter
 from typing import Any, Protocol
 
 import httpx
-from pydantic import BaseModel
 
+from harness.llm.base import Effort, LLMError, ModelInfo
 from harness.messages import (
     AssistantMessage,
     Message,
@@ -41,24 +41,7 @@ TOOL_NAMESPACE = "harness"
 _UNSUPPORTED_EFFORTS = {"ultra"}
 
 
-class Effort(BaseModel):
-    """Modelin ne kadar düşüneceği: seviye adı ve OpenAI'ın açıklaması."""
-
-    name: str
-    description: str
-
-
-class ModelInfo(BaseModel):
-    """Hesapta kullanılabilen bir model ve desteklediği effort seviyeleri."""
-
-    slug: str
-    display_name: str
-    description: str
-    default_effort: str | None
-    efforts: list[Effort]
-
-
-class ResponsesError(Exception):
+class ResponsesError(LLMError):
     """Model isteği başarısız; mesaj kullanıcıya gösterilebilir."""
 
 
@@ -189,9 +172,9 @@ def build_request(
     body: dict[str, Any] = {"model": model, "input": items, "store": False, "stream": True}
     if instructions:
         body["instructions"] = "\n\n".join(instructions)
-    if effort:
-        # Verilmezse modelin kendi varsayılanı kullanılır.
-        body["reasoning"] = {"effort": effort}
+    # Düşüncenin kendisi gizlidir; "summary" okunabilir bir özetini ister (zaman çizelgesinde
+    # modelin neden o aracı çağırdığı buradan görünür). Effort verilmezse modelin varsayılanı.
+    body["reasoning"] = {"summary": "auto", **({"effort": effort} if effort else {})}
     if tools:
         body["tools"] = [
             {
@@ -216,8 +199,16 @@ def parse_output(output: list[dict[str, Any]]) -> AssistantMessage:
     """Tamamlanan cevabın çıktı parçalarını tek bir AssistantMessage'a çevirir."""
     texts: list[str] = []
     calls: list[ToolCall] = []
+    summaries: list[str] = []
     for item in output:
-        if item.get("type") == "message":
+        if item.get("type") == "reasoning":
+            parts: list[dict[str, Any]] = item.get("summary") or []
+            summaries.extend(
+                str(part["text"])
+                for part in parts
+                if part.get("type") == "summary_text" and part.get("text")
+            )
+        elif item.get("type") == "message":
             for part in item.get("content", []):
                 if part.get("type") == "output_text":
                     texts.append(part["text"])
@@ -225,8 +216,9 @@ def parse_output(output: list[dict[str, Any]]) -> AssistantMessage:
             calls.append(
                 ToolCall(id=item["call_id"], name=item["name"], arguments=item["arguments"])
             )
-        # "reasoning" gibi diğer parçalar şimdilik atlanır.
-    return AssistantMessage(text="".join(texts), tool_calls=tuple(calls))
+    return AssistantMessage(
+        text="".join(texts), tool_calls=tuple(calls), reasoning="\n\n".join(summaries)
+    )
 
 
 async def _events(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:

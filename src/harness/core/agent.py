@@ -57,6 +57,7 @@ class Agent:
         permissions: PermissionManager,
         max_steps: int = 20,
         model_label: str | None = None,
+        provider: str | None = None,
         effort: str | None = None,
         anatomy: Anatomy | None = None,
         root: Path | None = None,
@@ -70,6 +71,7 @@ class Agent:
         if anatomy is not None and anatomy.save_code_blocks and root is None:
             raise ValueError("Kod bloklarını kaydeden anatomi bir çalışma dizini (root) ister.")
         self._model_label = model_label
+        self._provider = provider
         self._anatomy = anatomy
         self._root = root
         self._effort = effort
@@ -85,6 +87,7 @@ class Agent:
         step = 0
         yield TaskStarted(
             task=task,
+            provider=self._provider,
             model=self._model_label,
             effort=self._effort,
             anatomy=self._anatomy,
@@ -126,6 +129,7 @@ class Agent:
                     usage=reply.usage,
                     first_text_seconds=reply.first_text_seconds,
                     duration_seconds=model_duration,
+                    reasoning=reply.reasoning,
                     timestamp=datetime.now(UTC),
                 )
 

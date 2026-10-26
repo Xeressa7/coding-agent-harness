@@ -8,7 +8,8 @@ from typer.testing import CliRunner
 
 from harness.cli import app as cli
 from harness.core.config import Settings, load_settings, save_settings
-from harness.llm.responses import Effort, ModelInfo, build_request, list_models
+from harness.llm.base import Effort, ModelInfo
+from harness.llm.responses import build_request, list_models, parse_output
 from harness.messages import UserMessage
 
 
@@ -17,14 +18,14 @@ class FixedToken:
         return "t"
 
 
-def test_effort_goes_into_the_request() -> None:
+def test_effort_goes_into_the_request_next_to_the_summary_request() -> None:
     body = build_request("m", [UserMessage(text="x")], effort="high")
 
-    assert body["reasoning"] == {"effort": "high"}
+    assert body["reasoning"] == {"summary": "auto", "effort": "high"}
 
 
 def test_without_effort_the_model_default_is_used() -> None:
-    assert "reasoning" not in build_request("m", [UserMessage(text="x")])
+    assert build_request("m", [UserMessage(text="x")])["reasoning"] == {"summary": "auto"}
 
 
 @pytest.mark.anyio
@@ -119,3 +120,16 @@ def test_invalid_number_is_asked_again(saved: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert load_settings(saved) == Settings(model="gpt-6-luna", effort="low")
+
+
+def test_reasoning_summary_is_read_from_reasoning_items() -> None:
+    reply = parse_output(
+        [
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Önce README."}]},
+            {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Sonra kod."}]},
+            {"type": "message", "content": [{"type": "output_text", "text": "Cevap"}]},
+        ]
+    )
+
+    assert reply.reasoning == "Önce README.\n\nSonra kod."
+    assert reply.text == "Cevap"

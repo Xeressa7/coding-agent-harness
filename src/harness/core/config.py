@@ -16,10 +16,12 @@ DEFAULT_SESSIONS_HOME = HARNESS_HOME / "sessions"
 
 
 class Settings(BaseModel):
-    """Kullanıcının kalıcı seçimleri; `harness model` ile değişir."""
+    """Kullanıcının kalıcı seçimleri; `harness provider/model/effort` ile ayrı ayrı değişir."""
 
+    provider: str = "chatgpt"
     model: str = "gpt-6-luna"
     effort: str | None = None  # None: modelin kendi varsayılanı
+    anatomy: str | None = None  # None: varsayılan anatomi
 
 
 def load_settings(path: Path = DEFAULT_SETTINGS_PATH) -> Settings:
