@@ -10,13 +10,16 @@ Ekrana yazmaz, kullanıcıdan girdi almaz: her adımda events.py'deki bir olayı
 """
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing
 from datetime import UTC, datetime
+from pathlib import Path
 from time import perf_counter
 
 from harness.core.anatomy import Anatomy
+from harness.core.code_blocks import extract_code_blocks, save_code_blocks
 from harness.core.events import (
+    CodeBlocksSaved,
     ContextAssembled,
     Event,
     ModelReplied,
@@ -47,14 +50,24 @@ class Agent:
         model_label: str | None = None,
         effort: str | None = None,
         anatomy: Anatomy | None = None,
+        root: Path | None = None,
+        history: Sequence[Message] = (),
     ) -> None:
+        """root: harness'ın kendisinin dosya yazdığı çalışma dizini (seviye 0 kod blokları).
+
+        history: talimattan sonra gelen önceki konuşma; devam edilen oturum ya da
+        sohbet ortasında model değişimi için.
+        """
+        if anatomy is not None and anatomy.save_code_blocks and root is None:
+            raise ValueError("Kod bloklarını kaydeden anatomi bir çalışma dizini (root) ister.")
         self._model_label = model_label
         self._anatomy = anatomy
+        self._root = root
         self._effort = effort
         self._llm = llm
         self._tools = tools
         self._max_steps = max_steps
-        self.history: list[Message] = [SystemMessage(text=system_prompt)]
+        self.history: list[Message] = [SystemMessage(text=system_prompt), *history]
 
     async def run(self, task: str) -> AsyncGenerator[Event, None]:
         self.history.append(UserMessage(text=task))
@@ -108,6 +121,16 @@ class Agent:
                 )
 
                 if not reply.tool_calls:
+                    if self._anatomy and self._anatomy.save_code_blocks and self._root:
+                        blocks, unnamed = extract_code_blocks(reply.text)
+                        saved, rejected = save_code_blocks(blocks, self._root)
+                        yield CodeBlocksSaved(
+                            step=step,
+                            saved=tuple(saved),
+                            rejected=tuple(rejected),
+                            unnamed=unnamed,
+                            timestamp=datetime.now(UTC),
+                        )
                     yield TaskFinished(
                         reason="done",
                         steps=step,

@@ -56,7 +56,7 @@ def test_demo_runs_end_to_end_and_can_be_replayed(
     assert "Görev bitti" in result.output
     assert "böyle bir dosya yok" in result.output
 
-    (log_path,) = (tmp_path / "sessions").glob("*.jsonl")
+    (log_path,) = (tmp_path / "harness-sessions").rglob("*.jsonl")
     replayed = runner.invoke(app, ["replay", str(log_path)])
     assert replayed.exit_code == 0
     assert "Görev bitti" in replayed.output

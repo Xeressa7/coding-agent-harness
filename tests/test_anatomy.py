@@ -20,7 +20,7 @@ pytestmark = pytest.mark.anyio
 
 async def offered_tool_names(anatomy: Anatomy, root: Path) -> list[str]:
     model = ScriptedLLM([AssistantMessage(text="tamam")])
-    agent = Agent(model, anatomy.tool_registry(root), "talimat", anatomy=anatomy)
+    agent = Agent(model, anatomy.tool_registry(root), "talimat", anatomy=anatomy, root=root)
     _ = [event async for event in agent.run("görev")]
     return [spec.name for spec in model.offered_tools[0]]
 
@@ -42,7 +42,7 @@ async def test_bash_preset_adds_only_bash_on_top_of_files(tmp_path: Path) -> Non
 async def test_every_run_records_its_anatomy(tmp_path: Path) -> None:
     anatomy = get_preset("raw")
     model = ScriptedLLM([AssistantMessage(text="tamam")])
-    agent = Agent(model, anatomy.tool_registry(tmp_path), "talimat", anatomy=anatomy)
+    agent = Agent(model, anatomy.tool_registry(tmp_path), "talimat", anatomy=anatomy, root=tmp_path)
     log = SessionLogger(tmp_path / "kayit.jsonl")
     async for event in agent.run("görev"):
         log.write(event)
@@ -91,7 +91,7 @@ async def test_bash_level_lets_the_model_see_its_error_and_fix_it(tmp_path: Path
         ]
     )
     anatomy = get_preset("bash")
-    agent = Agent(model, anatomy.tool_registry(tmp_path), "talimat", anatomy=anatomy)
+    agent = Agent(model, anatomy.tool_registry(tmp_path), "talimat", anatomy=anatomy, root=tmp_path)
 
     events = [event async for event in agent.run("gemiyi çalıştır")]
 

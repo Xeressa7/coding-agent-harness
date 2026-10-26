@@ -60,12 +60,14 @@ def test_chat_preserves_history_and_hides_tool_details(
         "oku",
         "öncekini hatırla",
     ]
-    (source,) = (tmp_path / "sessions").glob("*.jsonl")
+    # Kayıt projeye değil harness'ın kendi klasörüne yazılır.
+    assert not (tmp_path / "sessions").exists()
+    (source,) = (tmp_path / "harness-sessions").rglob("*.jsonl")
     events = read_session(source)
     assert len([e for e in events if isinstance(e, TaskStarted)]) == 2
     assert len([e for e in events if isinstance(e, TaskFinished)]) == 2
     assert len([e for e in events if isinstance(e, ToolFinished)]) == 1
-    reports = sorted((tmp_path / "sessions").glob("*.html"))
+    reports = sorted((tmp_path / "harness-sessions").rglob("*.html"))
     assert len(reports) == 2
     assert any("Tur 2" in p.read_text(encoding="utf-8") for p in reports)
     assert all("TOOL_RESULT_SECRET" in p.read_text(encoding="utf-8") for p in reports)
@@ -81,7 +83,7 @@ def test_eof_without_prompt_does_not_call_provider(
     result = CliRunner().invoke(cli.app, ["chat"], input="")
     assert result.exit_code == 0
     assert not model.received
-    assert not list((tmp_path / "sessions").glob("*.jsonl"))
+    assert not list((tmp_path / "harness-sessions").rglob("*.jsonl"))
 
 
 class FailingModel:
@@ -102,11 +104,11 @@ def test_ask_model_failure_is_recorded_and_reported(
     result = CliRunner().invoke(cli.app, ["ask", "soru"])
     assert result.exit_code == 1
     assert "MODEL_FAILED" in result.output
-    (source,) = (tmp_path / "sessions").glob("*.jsonl")
+    (source,) = (tmp_path / "harness-sessions").rglob("*.jsonl")
     events = read_session(source)
     assert isinstance(events[-1], TaskFinished) and events[-1].reason == "error"
     assert not any(isinstance(e, ModelReplied) for e in events)
-    (report,) = (tmp_path / "sessions").glob("*.html")
+    (report,) = (tmp_path / "harness-sessions").rglob("*.html")
     assert "MODEL_FAILED" in report.read_text(encoding="utf-8")
 
 
@@ -123,7 +125,7 @@ def test_ask_success_is_quiet_and_inspect_accepts_existing_log(
     assert result.output.index("Sen") < result.output.index("soru")
     assert result.output.index("soru") < result.output.index("Ajan") < result.output.index("Yanıt")
     assert result.output.count("Yanıt") == 1
-    (source,) = (tmp_path / "sessions").glob("*.jsonl")
+    (source,) = (tmp_path / "harness-sessions").rglob("*.jsonl")
     target = tmp_path / "report.html"
     result = runner.invoke(cli.app, ["inspect", str(source), "--output", str(target)])
     assert result.exit_code == 0 and target.is_file()

@@ -69,6 +69,19 @@ class ToolFinished(_Event):
     duration_seconds: float | None = Field(default=None, ge=0)
 
 
+class CodeBlocksSaved(_Event):
+    """Seviye 0: harness, modelin cevabındaki adlı kod bloklarını dosyaya yazdı.
+
+    Bunu model değil harness yapar; araç çağrısı gibi gösterilmez.
+    """
+
+    kind: Literal["code_blocks_saved"] = "code_blocks_saved"
+    step: int
+    saved: tuple[str, ...] = ()
+    rejected: tuple[str, ...] = ()  # çalışma dizini dışı ya da klasör
+    unnamed: int = 0  # yolu olmayan, yazılmayan bloklar
+
+
 class TaskFinished(_Event):
     """done yalnız modelin araç istemeyi bıraktığıdır; test başarısı değildir."""
 
@@ -87,6 +100,7 @@ Event = Annotated[
     | ModelReplied
     | ToolStarted
     | ToolFinished
+    | CodeBlocksSaved
     | TaskFinished,
     Field(discriminator="kind"),
 ]

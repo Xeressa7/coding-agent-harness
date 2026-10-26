@@ -6,6 +6,7 @@ from html import escape
 from pathlib import Path
 
 from harness.core.events import (
+    CodeBlocksSaved,
     ContextAssembled,
     Event,
     ModelReplied,
@@ -25,6 +26,19 @@ _STATUS = {
     "error": "Hata",
     "cancelled": "Durduruldu",
 }
+
+
+def code_blocks_summary(event: CodeBlocksSaved) -> str:
+    """Seviye 0'da harness'ın cevaptan çıkarıp yazdığı dosyalar; bütün ön yüzler bunu yazar."""
+    parts = [
+        f"{len(event.saved)} dosya kaydedildi"
+        + (f": {', '.join(event.saved)}" if event.saved else "")
+    ]
+    if event.rejected:
+        parts.append(f"reddedilen: {', '.join(event.rejected)}")
+    if event.unnamed:
+        parts.append(f"yolsuz blok: {event.unnamed}")
+    return " · ".join(parts)
 
 
 def summary_items(events: Sequence[Event]) -> list[tuple[str, str]]:
@@ -138,6 +152,9 @@ def _event_html(event: Event) -> str:
             title = f"{state} · {call.name} · {call.id} · {seconds(event.duration_seconds)}"
             detail = "<h4>Argümanlar</h4>" + _pre(call.arguments)
             detail += "<h4>Gerçek araç sonucu</h4>" + _pre(result.content)
+        case CodeBlocksSaved(step=step):
+            title = f"Harness cevaptaki kod bloklarını yazdı · adım {step}"
+            detail = f"<p>{escape(code_blocks_summary(event))}</p>"
         case TaskFinished():
             title = f"{_STATUS[event.reason]} · {event.steps} adım"
             detail = _pre(event.error) if event.error else ""

@@ -1,5 +1,6 @@
 """Tam ekran yalnız etkileşimli terminalde; sade akış açıkça seçilebilir."""
 
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,8 +9,7 @@ from typer.testing import CliRunner
 
 from harness.cli import app as cli
 from harness.cli import tui
-from harness.core.anatomy import Anatomy
-from harness.core.session_log import SessionLogger
+from harness.cli.commands import ChatSession
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage
 
@@ -26,16 +26,11 @@ def test_interactive_chat_routes_to_tui(tmp_path: Path, monkeypatch: pytest.Monk
     )
     calls: list[tuple[str, str]] = []
 
-    def launch(
-        root: Path,
-        model: str,
-        effort: str | None,
-        prompt: str,
-        log: SessionLogger,
-        anatomy: Anatomy,
-    ) -> None:
-        calls.append((model, anatomy.name))
-        assert root == tmp_path and prompt
+    def launch(make_session: Callable[[object], ChatSession]) -> Path:
+        session = make_session(object())
+        calls.append((session.model, session.anatomy.name))
+        assert session.root == tmp_path and session.system_prompt
+        return session.log.path
 
     monkeypatch.setattr(tui, "run_tui", launch)
     result = CliRunner().invoke(cli.app, ["chat", "--model", "test-model", "--anatomy", "raw"])

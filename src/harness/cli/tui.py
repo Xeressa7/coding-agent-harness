@@ -1,6 +1,7 @@
 """Tam ekran terminal ön yüzü: sohbet, bağımsız akış ve sabit mesaj editörü."""
 
 import asyncio
+from collections.abc import Callable
 from contextlib import aclosing, suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,10 +18,11 @@ from textual.widgets import Button, Markdown, Static, TextArea
 from textual.widgets.markdown import MarkdownStream
 from textual.worker import Worker, WorkerCancelled
 
-from harness.cli.inspector import seconds, summary_items, write_report
+from harness.cli.commands import ChatSession, is_command
+from harness.cli.inspector import code_blocks_summary, seconds, summary_items, write_report
 from harness.core.agent import Agent
-from harness.core.anatomy import Anatomy
 from harness.core.events import (
+    CodeBlocksSaved,
     ContextAssembled,
     Event,
     ModelReplied,
@@ -32,8 +34,6 @@ from harness.core.events import (
     ToolStarted,
 )
 from harness.core.session_log import SessionLogger
-from harness.llm.chatgpt_auth import ChatGPTTokens
-from harness.llm.responses import ResponsesLLM
 
 
 class ComposeInput(TextArea):
@@ -58,8 +58,9 @@ class ComposeInput(TextArea):
 
 
 class ChatMessage(Vertical):
-    def __init__(self, role: str, source: str = "", *, user: bool = False) -> None:
-        super().__init__(classes="message user-message" if user else "message agent-message")
+    def __init__(self, role: str, source: str = "", *, kind: str = "agent") -> None:
+        """kind: user (kullanıcı), agent (model) ya da command (/komut cevabı)."""
+        super().__init__(classes=f"message {kind}-message")
         self.role = role
         self.source = source
         self.markdown = Markdown(source, open_links=False)
@@ -101,20 +102,9 @@ class HarnessApp(App[None]):
         Binding("ctrl+t", "toggle_theme", "Tema", priority=True),
     ]
 
-    def __init__(
-        self,
-        agent: Agent,
-        log: SessionLogger,
-        *,
-        model_label: str,
-        root: Path,
-        initial_task: str | None = None,
-    ) -> None:
+    def __init__(self, session: ChatSession, *, initial_task: str | None = None) -> None:
         super().__init__()
-        self.agent = agent
-        self.session_log = log
-        self.model_label = model_label
-        self.root = root
+        self.session = session
         self.initial_task = initial_task
         self.busy = False
         self.failed = False
@@ -155,15 +145,28 @@ class HarnessApp(App[None]):
         )
         self.theme = "harness-dark"
 
-    def compose(self) -> ComposeResult:
-        yield Static(
-            Text(
-                f" HARNESS  /  {self.model_label}  /  {self.root}",
-                no_wrap=True,
-                overflow="ellipsis",
-            ),
-            id="topbar",
+    # Model, ajan ve kayıt /komutlarla değişebilir; her seferinde oturumdan okunur.
+    @property
+    def agent(self) -> Agent:
+        return self.session.agent
+
+    @property
+    def session_log(self) -> SessionLogger:
+        return self.session.log
+
+    @property
+    def model_label(self) -> str:
+        return self.session.label
+
+    def topbar_text(self) -> Text:
+        return Text(
+            f" HARNESS  /  {self.model_label}  /  {self.session.root}",
+            no_wrap=True,
+            overflow="ellipsis",
         )
+
+    def compose(self) -> ComposeResult:
+        yield Static(self.topbar_text(), id="topbar")
         with Horizontal(id="body"):
             with Vertical(id="chat-pane"):
                 with Horizontal(id="chat-heading"):
@@ -175,7 +178,8 @@ class HarnessApp(App[None]):
                             "Birlikte ne yapalım?\n\n"
                             "Mesajını aşağıya yaz. Yanıtlar burada akar; "
                             "işlem durumu sağda kalır.\n"
-                            "Yukarı kaydırdığında okuduğun yer korunur."
+                            "Yukarı kaydırdığında okuduğun yer korunur.\n"
+                            "/help: model, effort ve oturum komutları."
                         ),
                         id="welcome",
                     )
@@ -241,18 +245,14 @@ class HarnessApp(App[None]):
         if not question:
             return
         editor = self.query_one(ComposeInput)
-        if question == "/exit":
-            await self.action_quit()
-            return
-        if question == "/inspect":
-            editor.clear()
-            self.action_inspect()
+        if is_command(question):
+            await self.run_command(question)
             return
         if self.busy:
             self.set_status("Görev sürüyor; taslağın korunuyor.")
             return
         if self.failed:
-            self.set_status("Yeni oturum için sohbeti yeniden aç.")
+            self.set_status("Bu oturum kesildi · /new ya da /resume ile devam et")
             return
         self.busy = True
         self._active_question = question
@@ -266,7 +266,7 @@ class HarnessApp(App[None]):
         self.query_one("#flow-empty").display = False
         # Çizimi beklemeden worker'ı kaydet; durdurma önceki turu hedeflemesin.
         user_mounted = self.query_one("#conversation", VerticalScroll).mount(
-            ChatMessage("Sen", question, user=True)
+            ChatMessage("Sen", question, kind="user")
         )
 
         async def turn() -> None:
@@ -279,6 +279,46 @@ class HarnessApp(App[None]):
             group="agent",
             exit_on_error=False,
         )
+
+    async def run_command(self, text: str) -> None:
+        name = text.split()[0].lower()
+        if self.busy and name not in {"/help", "/sessions", "/inspect", "/exit"}:
+            self.set_status("Görev sürüyor; komut için bitmesini bekle ya da Esc.")
+            return
+        self.query_one(ComposeInput).clear()
+        self.set_status("Komut çalışıyor…")
+        reply = await self.session.run(text)
+        if reply.exit:
+            await self.action_quit()
+            return
+        if reply.inspect:
+            self.action_inspect()
+            return
+        if reply.reset:
+            await self.reset_conversation(reply.transcript)
+        if reply.text:
+            self.query_one("#welcome").display = False
+            await self.query_one("#conversation", VerticalScroll).mount(
+                ChatMessage("Harness", reply.text, kind="command")
+            )
+        self.query_one("#topbar", Static).update(self.topbar_text())
+        self.set_status("Görev sürüyor…" if self.busy else "Hazır · Enter gönder")
+
+    async def reset_conversation(self, transcript: tuple[tuple[str, str], ...]) -> None:
+        """Yeni ya da devam edilen oturum: ekran o oturumun konuşmasını gösterir."""
+        await self.query(ChatMessage).remove()
+        await self.query(".flow-entry").remove()
+        conversation = self.query_one("#conversation", VerticalScroll)
+        for role, text in transcript:
+            kind = "user" if role == "Sen" else "agent"
+            await conversation.mount(ChatMessage(role, text, kind=kind))
+        self.query_one("#welcome").display = not transcript
+        self.query_one("#flow-empty").display = True
+        self._turn_number = sum(role == "Sen" for role, _ in transcript)
+        self.failed = False
+        self.report = None
+        self.query_one("#inspect", Button).disabled = True
+        self.query_one("#send", Button).disabled = False
 
     async def consume(self, question: str) -> None:
         events_seen = self._active_events
@@ -319,6 +359,8 @@ class HarnessApp(App[None]):
                         case ToolFinished(call=call, result=result, duration_seconds=duration):
                             mark = "!" if result.is_error else "✓"
                             await self.add_flow(f"{mark} {call.name}\n{seconds(duration)}")
+                        case CodeBlocksSaved():
+                            await self.add_flow(f"✓ {code_blocks_summary(event)}")
                         case TaskFinished(reason=reason):
                             finished = True
                             if reason in {"cancelled", "error"}:
@@ -333,7 +375,7 @@ class HarnessApp(App[None]):
                                 {
                                     "done": "Tamamlandı · Enter ile yeni mesaj",
                                     "step_limit": "Adım sınırı · yeni mesaj yazabilirsin",
-                                    "cancelled": "Durduruldu · yeni oturum aç",
+                                    "cancelled": "Durduruldu · /new ya da /resume ile devam et",
                                     "error": "Hata · ayrıntılar kayıtta",
                                 }[reason]
                             )
@@ -343,7 +385,7 @@ class HarnessApp(App[None]):
             if not finished:
                 self._record_cancelled_turn(question, events_seen)
                 self.failed = True
-                self.set_status("Durduruldu · yeni oturum aç")
+                self.set_status("Durduruldu · /new ya da /resume ile devam et")
             raise
         except Exception:
             self.failed = True
@@ -415,7 +457,7 @@ class HarnessApp(App[None]):
                     self._active_events = []
                 self.busy = False
                 self.failed = True
-                self.set_status("Durduruldu · yeni oturum aç")
+                self.set_status("Durduruldu · /new ya da /resume ile devam et")
                 self.query_one("#send", Button).disabled = True
                 self.query_one("#stop", Button).disabled = True
 
@@ -450,24 +492,13 @@ class HarnessApp(App[None]):
             self.set_status("Henüz inceleme raporu yok.")
 
 
-def run_tui(
-    root: Path,
-    model: str,
-    effort: str | None,
-    prompt: str,
-    log: SessionLogger,
-    anatomy: Anatomy,
-) -> None:
-    async def run() -> None:
-        async with httpx.AsyncClient(timeout=120) as http:
-            agent = Agent(
-                ResponsesLLM(ChatGPTTokens(http), model, http, effort),
-                anatomy.tool_registry(root),
-                prompt,
-                model_label=model,
-                effort=effort,
-                anatomy=anatomy,
-            )
-            await HarnessApp(agent, log, model_label=model, root=root).run_async()
+def run_tui(make_session: Callable[[httpx.AsyncClient], ChatSession]) -> Path:
+    """Tam ekran sohbeti açar; kapanınca son kullanılan kayıt dosyasının yolunu döner."""
 
-    asyncio.run(run())
+    async def run() -> Path:
+        async with httpx.AsyncClient(timeout=120) as http:
+            session = make_session(http)
+            await HarnessApp(session).run_async()
+            return session.log.path
+
+    return asyncio.run(run())

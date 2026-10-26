@@ -7,7 +7,9 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
 
+from harness.cli.inspector import code_blocks_summary
 from harness.core.events import (
+    CodeBlocksSaved,
     ContextAssembled,
     Event,
     ModelReplied,
@@ -43,6 +45,8 @@ def render(console: Console, event: Event) -> None:
             # Text(): dosya içeriğindeki [köşeli parantez] Rich biçim komutu sanılmasın.
             body = Text(_shorten(result.content))
             console.print(Panel(body, title=title, border_style=style))
+        case CodeBlocksSaved():
+            console.print(Text(f"[harness] {code_blocks_summary(event)}", style="cyan"))
         case TaskFinished(reason="done", steps=steps):
             console.print()
             console.rule(f"[bold green]Görev bitti · {steps} adım")

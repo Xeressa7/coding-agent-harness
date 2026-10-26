@@ -3,7 +3,6 @@
 import asyncio
 import re
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -15,12 +14,21 @@ from rich.prompt import IntPrompt
 from rich.table import Table
 from rich.text import Text
 
-from harness.cli.inspector import summary_items, write_report
+from harness.cli.commands import ChatSession, CommandReply, is_command, new_session_log
+from harness.cli.inspector import code_blocks_summary, summary_items, write_report
 from harness.cli.render import render
 from harness.core.agent import Agent
 from harness.core.anatomy import DEFAULT_PRESET, PRESETS, Anatomy, get_preset
-from harness.core.config import Settings, find_project_root, load_settings, save_settings
+from harness.core.config import (
+    DEFAULT_SESSIONS_HOME,
+    Settings,
+    find_project_root,
+    load_settings,
+    project_sessions_dir,
+    save_settings,
+)
 from harness.core.events import (
+    CodeBlocksSaved,
     Event,
     ModelReplied,
     ModelStarted,
@@ -37,7 +45,9 @@ from harness.messages import AssistantMessage, ToolCall
 app = typer.Typer(help="LLM tabanlı coding agent harness'i.", no_args_is_help=True)
 console = Console()
 
-_PROMPT_FILE = Path(__file__).parent.parent / "prompts" / "system.md"
+_PROMPT_DIR = Path(__file__).parent.parent / "prompts"
+_PROMPT_FILES = {"agent": "system.md", "raw": "raw.md"}
+SESSIONS_HOME = DEFAULT_SESSIONS_HOME
 
 DEMO_TASK = "Bu proje hangi Python sürümünü istiyor, bağımlılıkları neler?"
 
@@ -80,9 +90,9 @@ def pick_anatomy(name: str) -> Anatomy:
         raise typer.BadParameter(str(exc), param_hint="--anatomy") from exc
 
 
-def load_system_prompt() -> str:
-    """system.md'yi okur; dosyanın başındaki açıklama yorumu modele gitmez."""
-    text = _PROMPT_FILE.read_text(encoding="utf-8")
+def load_system_prompt(anatomy: Anatomy) -> str:
+    """Anatominin talimat dosyasını okur; dosyanın başındaki açıklama yorumu modele gitmez."""
+    text = (_PROMPT_DIR / _PROMPT_FILES[anatomy.prompt]).read_text(encoding="utf-8")
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip()
 
 
@@ -93,8 +103,8 @@ def start_session(model_label: str) -> Path:
     return root
 
 
-def new_session_log(root: Path) -> SessionLogger:
-    return SessionLogger(root / "sessions" / f"{datetime.now():%Y%m%d-%H%M%S-%f}.jsonl")
+def sessions_dir(root: Path) -> Path:
+    return project_sessions_dir(root, SESSIONS_HOME)
 
 
 @app.command()
@@ -105,22 +115,26 @@ def demo(
     """Sahte modelle hazır bir görevi çalıştırır: döngü, araç, hata ve kayıt bir arada."""
     root = start_session("sahte model (hazır senaryo)")
     anatomy = get_preset("files")  # senaryo read_file çağırır
-    agent = Agent(
-        llm=ScriptedLLM(DEMO_SCRIPT),
-        tools=anatomy.tool_registry(root),
-        system_prompt=load_system_prompt(),
-        model_label="sahte model (hazır senaryo)",
+
+    async def no_models() -> list[ModelInfo]:
+        raise RuntimeError("demo sahte modelle çalışır")
+
+    session = ChatSession(
+        root=root,
         anatomy=anatomy,
+        system_prompt=load_system_prompt(anatomy),
+        model="Sahte model (hazır senaryo)",
+        effort=None,
+        make_llm=lambda model, effort: ScriptedLLM(DEMO_SCRIPT),
+        load_models=no_models,
+        sessions_dir=sessions_dir(root),
     )
-    log = new_session_log(root)
     if tui:
         from harness.cli.tui import HarnessApp
 
-        screen = HarnessApp(
-            agent, log, model_label="Sahte model · hazır senaryo", root=root, initial_task=DEMO_TASK
-        )
-        screen.run()
+        HarnessApp(session, initial_task=DEMO_TASK).run()
         return
+    agent, log = session.agent, session.log
 
     async def run() -> None:
         async for event in agent.run(DEMO_TASK):
@@ -273,7 +287,7 @@ def ask(
     picked_model = model or settings.model
     picked_effort = effort or (settings.effort if picked_model == settings.model else None)
     root = start_session(f"{picked_model} · effort: {picked_effort or 'varsayılan'}")
-    log = new_session_log(root)
+    log = new_session_log(sessions_dir(root))
     console.rule("[bold cyan]Sen", align="left")
     console.print(Text(question))
 
@@ -282,10 +296,11 @@ def ask(
             agent = Agent(
                 llm=ResponsesLLM(ChatGPTTokens(http), picked_model, http, picked_effort),
                 tools=anatomy.tool_registry(root),
-                system_prompt=load_system_prompt(),
+                system_prompt=load_system_prompt(anatomy),
                 model_label=picked_model,
                 effort=picked_effort,
                 anatomy=anatomy,
+                root=root,
             )
             await run_turn(agent, question, log)
 
@@ -323,6 +338,9 @@ async def run_turn(agent: Agent, question: str, log: SessionLogger) -> Path | No
                         stream_open = True
                     console.print(Text(event.text), end="", soft_wrap=True)
                     streamed_text += event.text
+                elif isinstance(event, CodeBlocksSaved):
+                    status.stop()
+                    console.print(Text(code_blocks_summary(event), style="dim"))
                 elif isinstance(event, ModelReplied):
                     if stream_open:
                         # Bazı sağlayıcılar son parçayı yalnız tamamlanmış mesajda verir.
@@ -363,7 +381,7 @@ def chat(
     plain: Annotated[bool, typer.Option("--plain", help="Tam ekran yerine sade çıktı")] = False,
     anatomy_name: AnatomyOption = DEFAULT_PRESET,
 ) -> None:
-    """Tam ekran sohbet; --plain veya boruda sade çıktı. /exit çıkar, /inspect raporu açar."""
+    """Tam ekran sohbet; --plain veya boruda sade çıktı. /help sohbet içi komutları listeler."""
     anatomy = pick_anatomy(anatomy_name)
     settings = load_settings()
     picked_model = model or settings.model
@@ -372,26 +390,19 @@ def chat(
         from harness.cli.tui import run_tui
 
         root = find_project_root(Path.cwd())
-        log = new_session_log(root)
-        run_tui(root, picked_model, picked_effort, load_system_prompt(), log, anatomy)
-        if log.path.exists():
-            console.print(Text(f"Oturum kaydı: {log.path}"))
+        log_path = run_tui(
+            lambda http: chat_session(root, anatomy, picked_model, picked_effort, http)
+        )
+        if log_path.exists():
+            console.print(Text(f"Oturum kaydı: {log_path}"))
         return
     root = start_session(f"{picked_model} · effort: {picked_effort or 'varsayılan'}")
-    log = new_session_log(root)
-    console.print("/exit: çıkış · /inspect: son rapor · Ctrl+C: durdur")
+    console.print("/help: komutlar · /exit: çıkış · Ctrl+C: durdur")
     console.print("Kayıt ve rapor, istemler ve dosya içerikleri gibi hassas veri içerebilir.")
 
     async def run() -> None:
         async with httpx.AsyncClient(timeout=120) as http:
-            agent = Agent(
-                llm=ResponsesLLM(ChatGPTTokens(http), picked_model, http, picked_effort),
-                tools=anatomy.tool_registry(root),
-                system_prompt=load_system_prompt(),
-                model_label=picked_model,
-                effort=picked_effort,
-                anatomy=anatomy,
-            )
+            session = chat_session(root, anatomy, picked_model, picked_effort, http)
             report: Path | None = None
             while True:
                 try:
@@ -399,18 +410,23 @@ def chat(
                     question = console.input("[bold cyan]> [/]").strip()
                 except EOFError:
                     break
-                if question == "/exit":
-                    break
-                if question == "/inspect":
-                    if report:
-                        typer.launch(report.resolve().as_uri())
-                    else:
-                        console.print("Henüz rapor yok.")
-                    continue
                 if not question:
                     continue
+                if is_command(question):
+                    reply = await session.run(question)
+                    if reply.exit:
+                        break
+                    if reply.inspect:
+                        if report:
+                            typer.launch(report.resolve().as_uri())
+                        else:
+                            console.print("Henüz rapor yok.")
+                    if reply.reset:
+                        report = None
+                    show_reply(reply)
+                    continue
                 console.print()
-                report = await run_turn(agent, question, log)
+                report = await run_turn(session.agent, question, session.log)
 
     try:
         asyncio.run(run())
@@ -421,6 +437,32 @@ def chat(
     except KeyboardInterrupt as exc:
         console.print("Durduruldu.")
         raise typer.Exit(130) from exc
+
+
+def chat_session(
+    root: Path, anatomy: Anatomy, model: str, effort: str | None, http: httpx.AsyncClient
+) -> ChatSession:
+    """Gerçek modelle sohbet; model listesi ve istemci aynı HTTP bağlantısını paylaşır."""
+    return ChatSession(
+        root=root,
+        anatomy=anatomy,
+        system_prompt=load_system_prompt(anatomy),
+        model=model,
+        effort=effort,
+        make_llm=lambda model, effort: ResponsesLLM(ChatGPTTokens(http), model, http, effort),
+        load_models=lambda: list_models(ChatGPTTokens(http), http),
+        sessions_dir=sessions_dir(root),
+    )
+
+
+def show_reply(reply: CommandReply) -> None:
+    for role, text in reply.transcript:
+        console.rule(f"[bold {'cyan' if role == 'Sen' else 'magenta'}]{role}", align="left")
+        console.print(Markdown(text) if role == "Ajan" else Text(text))
+    if reply.text:
+        if reply.transcript:
+            console.rule(style="dim")
+        console.print(Markdown(reply.text))
 
 
 @app.command(name="inspect")

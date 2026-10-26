@@ -4,11 +4,15 @@ Değerler komut satırından ya da yapılandırma dosyasından gelir. API anahta
 yalnız ortam değişkeninden okunur.
 """
 
+import re
 from pathlib import Path
 
 from pydantic import BaseModel
 
-DEFAULT_SETTINGS_PATH = Path.home() / ".harness" / "settings.json"
+HARNESS_HOME = Path.home() / ".harness"
+DEFAULT_SETTINGS_PATH = HARNESS_HOME / "settings.json"
+# Oturum kayıtları ajanın çalıştığı projeye değil buraya yazılır: harness misafirdir.
+DEFAULT_SESSIONS_HOME = HARNESS_HOME / "sessions"
 
 
 class Settings(BaseModel):
@@ -45,3 +49,12 @@ def find_project_root(start: Path, home: Path | None = None) -> Path:
         if (folder / ".git").exists():
             return folder
     return start
+
+
+def project_sessions_dir(root: Path, home: Path = DEFAULT_SESSIONS_HOME) -> Path:
+    r"""Bir projenin kayıt klasörü: proje yolu tek klasör adına çevrilir.
+
+    C:\Users\ali\proje -> C--Users-ali-proje. Ad okunabilir kalır ve aynı adlı iki
+    proje (farklı yerlerde) karışmaz.
+    """
+    return home / re.sub(r"[^A-Za-z0-9_.-]", "-", str(root.resolve())).strip("-")

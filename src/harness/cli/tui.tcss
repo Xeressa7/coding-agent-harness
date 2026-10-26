@@ -38,6 +38,8 @@ Screen {
 #welcome { height: auto; padding: 1; color: $text-muted; }
 .message { height: auto; margin: 0 0 1 0; padding: 0 1; }
 .user-message { background: $surface; border-left: solid $primary; }
+.command-message { border-left: solid $text-muted; }
+.command-message .message-role { color: $text-muted; }
 .message-role { height: 1; text-style: bold; color: $primary; }
 .message Markdown { height: auto; margin: 0; padding: 0; background: transparent; }
 .message MarkdownH1, .message MarkdownH2, .message MarkdownH3 { margin-top: 1; margin-bottom: 0; }

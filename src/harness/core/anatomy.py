@@ -43,6 +43,8 @@ class Anatomy(BaseModel):
 
     name: str
     tools: tuple[ToolName, ...] = ()
+    prompt: Literal["agent", "raw"] = "agent"  # prompts/ altındaki talimat dosyası
+    save_code_blocks: bool = False  # seviye 0: cevaptaki adlı kod blokları dosyaya yazılır
 
     def tool_registry(self, root: Path) -> ToolRegistry:
         """Açık araçları, çalışma dizinine bağlı olarak kurar."""
@@ -50,7 +52,7 @@ class Anatomy(BaseModel):
 
 
 PRESETS: dict[str, Anatomy] = {
-    "raw": Anatomy(name="raw"),
+    "raw": Anatomy(name="raw", prompt="raw", save_code_blocks=True),
     "files": Anatomy(name="files", tools=_FILE_TOOLS),
     "bash": Anatomy(name="bash", tools=(*_FILE_TOOLS, "bash")),
 }

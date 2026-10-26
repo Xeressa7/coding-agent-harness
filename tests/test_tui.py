@@ -9,14 +9,14 @@ from textual.containers import VerticalScroll
 from textual.events import MouseScrollDown
 from textual.widgets import Button
 
+from harness.cli.commands import ChatSession
 from harness.cli.tui import ChatMessage, ComposeInput, HarnessApp
-from harness.core.agent import Agent
+from harness.core.anatomy import get_preset
 from harness.core.events import TaskFinished, TaskStarted
-from harness.core.session_log import SessionLogger, read_session
+from harness.core.session_log import read_session
+from harness.llm.responses import ModelInfo
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage, Message, TextDelta, TokenUsage, ToolCall, ToolSpec
-from harness.tools.base import ToolRegistry
-from harness.tools.read_file import ReadFile
 
 pytestmark = pytest.mark.anyio
 
@@ -24,10 +24,21 @@ pytestmark = pytest.mark.anyio
 def make_app(model: object, tmp_path: Path) -> HarnessApp:
     # Concrete LLM doubles below satisfy the shared complete/stream protocols.
     assert isinstance(model, (ScriptedLLM, ControlledModel))
-    agent = Agent(model, ToolRegistry([ReadFile(root=tmp_path)]), "talimat")
-    return HarnessApp(
-        agent, SessionLogger(tmp_path / "tui.jsonl"), model_label="test-model", root=tmp_path
+
+    async def no_models() -> list[ModelInfo]:
+        raise RuntimeError("testte model listesi yok")
+
+    session = ChatSession(
+        root=tmp_path,
+        anatomy=get_preset("files"),
+        system_prompt="talimat",
+        model="test-model",
+        effort=None,
+        make_llm=lambda name, effort: model,
+        load_models=no_models,
+        sessions_dir=tmp_path / "logs",
     )
+    return HarnessApp(session)
 
 
 class ControlledModel:
@@ -207,6 +218,31 @@ async def test_escape_cancels_without_allowing_broken_history_to_continue(tmp_pa
         events = read_session(app.session_log.path)
         assert isinstance(events[-1], TaskFinished) and events[-1].reason == "cancelled"
         assert app.report is not None
+
+
+async def test_new_command_recovers_a_cancelled_session(tmp_path: Path) -> None:
+    model = ControlledModel()
+    app = make_app(model, tmp_path)
+    async with app.run_test() as pilot:
+        await app.submit("bekle")
+        await asyncio.wait_for(model.entered.wait(), timeout=2)
+        await pilot.press("escape")
+        await app.wait_turn()
+        old_log = app.session_log.path
+        assert app.failed
+
+        await app.submit("/help")
+        await pilot.pause()
+        (help_card,) = app.query(".command-message")
+        assert "/resume" in help_card.source  # type: ignore[attr-defined]
+        assert app.failed  # yardım oturumu kurtarmaz
+
+        await app.submit("/new")
+        await pilot.pause()
+        assert not app.failed and not app.query_one("#send", Button).disabled
+        assert [c.role for c in app.query(ChatMessage)] == ["Harness"]
+        assert app.session_log.path != old_log
+        assert len(app.agent.history) == 1
 
 
 async def test_tool_details_only_in_report_not_chat_or_flow(tmp_path: Path) -> None:
