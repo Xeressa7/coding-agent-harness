@@ -17,7 +17,7 @@ araçlı turda onu geri ister, bu yüzden aynı uç noktaya geri gönderilir.
 import json
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from time import perf_counter
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import httpx
 
@@ -294,12 +294,16 @@ async def list_chat_models(
 
 def _http_error(response: httpx.Response) -> ChatCompletionsError:
     """Sağlayıcının hata mesajı varsa onu, yoksa gövdenin başını gösterir."""
+    message: object = None
     try:
-        body: Any = response.json()
-        error: Any = body.get("error") if isinstance(body, dict) else None
-        message = error.get("message") if isinstance(error, dict) else error
+        body: object = response.json()
     except ValueError:
-        message = None
+        body = None
+    if isinstance(body, dict):
+        error = cast(dict[str, object], body).get("error")
+        message = (
+            cast(dict[str, object], error).get("message") if isinstance(error, dict) else error
+        )
     detail = str(message) if message else response.text[:500]
     return ChatCompletionsError(f"HTTP {response.status_code}: {detail}")
 
