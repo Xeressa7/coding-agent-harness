@@ -191,6 +191,18 @@ def make_llm(
             )
 
 
+async def reachable(
+    provider: Provider, http: httpx.AsyncClient, env: Mapping[str, str] | None = None
+) -> bool:
+    """Yerel sunucu ayakta mı? (`status` için kısa yoklama; model listesi uç noktası.)"""
+    env = os.environ if env is None else env
+    try:
+        response = await http.get(f"{provider.url(env)}/models", timeout=0.8)
+    except httpx.HTTPError:
+        return False
+    return response.status_code < 500
+
+
 async def list_models(
     provider: Provider,
     http: httpx.AsyncClient,

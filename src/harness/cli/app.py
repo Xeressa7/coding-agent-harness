@@ -14,6 +14,7 @@ Alışılmış kodlama ajanı CLI'larının biçimi:
 """
 
 import asyncio
+import os
 import re
 import sys
 from collections.abc import Callable, Coroutine
@@ -71,6 +72,7 @@ from harness.llm.providers import (
     get_provider,
     list_models,
     make_llm,
+    reachable,
     readiness,
 )
 from harness.llm.scripted import ScriptedLLM
@@ -764,6 +766,14 @@ def status() -> None:
 def providers_command() -> None:
     """Sağlayıcılar ve hazır olup olmadıkları (anahtar/giriş)."""
     current = load_settings().provider
+    local = [p for p in PROVIDERS.values() if p.local]
+
+    async def probe() -> dict[str, bool]:
+        async with httpx.AsyncClient() as http:
+            results = await asyncio.gather(*(reachable(p, http) for p in local))
+        return {p.name: ok for p, ok in zip(local, results, strict=True)}
+
+    alive = asyncio.run(probe())
     table = Table(title="Sağlayıcılar", title_justify="left")
     table.add_column("")
     table.add_column("Ad")
@@ -772,6 +782,9 @@ def providers_command() -> None:
     table.add_column("Durum")
     for p in PROVIDERS.values():
         ready, detail = readiness(p)
+        if p.local:
+            ready = alive[p.name]
+            detail = f"{'çalışıyor' if ready else 'kapalı'}: {p.url(os.environ)}"
         table.add_row(
             "●" if p.name == current else "",
             p.name,

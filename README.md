@@ -5,29 +5,85 @@ düzenleme, arama ve terminal araçları verip bunları denetimli bir döngüde
 çalıştıran komut satırı uygulaması. Tekirdağ Namık Kemal Üniversitesi
 Bilgisayar Mühendisliği bitirme projesi.
 
-> Durum: çekirdek döngü, bağlam yöneticisi (uzun araç çıktısını kırpar), izin
-> katmanı (ALLOW/ASK/DENY, oturum boyu izin ver), `read_file`/`write_file`/
-> `edit_file`/`search`/`bash` araçları, çok turlu terminal sohbeti, görev
-> sonrası yerel inceleme ekranı ve küçük bir görev seti üzerinde çalışan
-> değerlendirme koşucusu (`tasks/`, `core/evaluation.py`) var. Gerçek model
-> ChatGPT planı üzerinden (Responses API) bağlı; OpenAI uyumlu Chat
-> Completions adaptörü (Ollama için) henüz CLI'a bağlanmadı.
+> Durum: çekirdek döngü, bağlam kırpma, izin katmanı (araç türüne göre sorar),
+> dokuz araç, yedi sağlayıcı, tam ekran ve sade sohbet, `-p` ile tek seferlik görev,
+> zaman çizelgeli koşu incelemesi ve küçük bir değerlendirme görev seti
+> (`tasks/`, `core/evaluation.py`) var.
 
 ## Kullanım
 
+Alışılmış kodlama ajanı CLI'larının biçimi:
+
 ```sh
-uv run harness demo                 # sahte modelle hazır görev: döngü, araç, hata, kayıt
-uv run harness demo --tui           # tam ekran arayüzü sahte modelle dene
-uv run harness login                # ChatGPT hesabıyla giriş (tarayıcı açılır)
-uv run harness model                # model ve effort seç (numarayla); seçim kaydedilir
-uv run harness ask "soru"           # tek görev; sade cevap, özet ve HTML inceleme kaydı
-uv run harness chat                 # tam ekran: solda sohbet, sağda akış, altta mesaj
-uv run harness chat --plain         # eski sade akış; boruda da otomatik seçilir
-uv run harness inspect sessions/<dosya>.jsonl --open  # eski/yeni kaydı HTML'e çevir ve aç
-uv run harness replay sessions/<dosya>.jsonl   # ayrıntılı terminal kaydını yeniden oynat
+harness                          # sohbet: terminalde tam ekran, boruda sade akış
+harness -p "soru"                # tek görev; yalnız cevap stdout'a (betiklerde kullanılır)
+harness -p "düzelt" --allow write_file --allow bash   # -p'de izin önceden verilir
+harness -c                       # bu projenin son oturumuna devam (-p ile de olur)
+harness --provider anthropic -m claude-opus-5-5 --effort high   # yalnız bu koşu için
+harness -V                       # sürüm
 ```
 
-Tek görevlik değişiklik için: `harness ask "soru" --model gpt-6-sol --effort high`.
+Kalıcı seçimler ayrı ayrı yapılır (numaralı menü ya da doğrudan ad):
+
+```sh
+harness provider [ad]    # sağlayıcı; her sağlayıcıda son kullanılan model hatırlanır
+harness model [ad]       # yalnız model (geçerli effort korunur)
+harness effort [seviye]  # yalnız düşünme seviyesi; "varsayılan" modelin kendi seçimine döner
+harness anatomy [ad]     # açık katmanlar: raw, files, bash, full
+```
+
+Bilgi ve inceleme:
+
+```sh
+harness status           # seçimler, proje, kayıt klasörü, sağlayıcıların hazırlığı
+harness providers        # sağlayıcılar ve anahtar/giriş durumu (ağa çıkmadan)
+harness models           # sağlayıcının modelleri ve effort seviyeleri
+harness sessions         # bu projenin oturumları
+harness inspect <kayıt>.jsonl --open   # koşu incelemesini (HTML) üret ve aç
+harness replay <kayıt>.jsonl           # ayrıntılı terminal gösterimiyle yeniden oynat
+harness demo [--tui]     # sahte modelle hazır görev (eğitim; sağlayıcı çağrısı yok)
+harness login | logout   # ChatGPT planı girişi
+```
+
+`ask` ve `chat` eski adlarıyla da çalışır. Geliştirme sırasında komutların başına
+`uv run` eklenir; `uv tool install -e .` ile `harness` her klasörden çağrılır.
+
+### Sohbet içi komutlar
+
+`/status` · `/provider` · `/model` · `/effort` · `/anatomy` · `/tools` · `/usage`
+(`/cost`) · `/new` (`/clear`) · `/sessions` · `/resume <no>` · `/inspect` · `/exit`
+(`/quit`). Değişiklikler yalnız o sohbet içindir; sağlayıcı/model/effort değişince
+geçmiş korunur, "oturum boyu" izinler `/new`, `/resume` ve anatomi değişiminde sıfırlanır.
+
+## Sağlayıcılar
+
+| Ad | API | Kimlik |
+|---|---|---|
+| `chatgpt` | Responses (ChatGPT planı) | `harness login` |
+| `openai` | Chat Completions | `OPENAI_API_KEY` |
+| `anthropic` | Messages (resmi SDK) | `ANTHROPIC_API_KEY` |
+| `openrouter` | Chat Completions | `OPENROUTER_API_KEY` |
+| `deepseek` | Chat Completions | `DEEPSEEK_API_KEY` |
+| `ollama` | Chat Completions (yerel) | yok; adres `OLLAMA_HOST` |
+| `lmstudio` | Chat Completions (yerel) | yok |
+
+Anahtarlar yalnız ortam değişkeninden okunur, diske yazılmaz. Yeni bir OpenAI
+uyumlu sağlayıcı `llm/providers.py` tablosuna bir satırdır. Sağlayıcı düşünce
+özeti veriyorsa (Responses `reasoning.summary`, Claude `display: summarized`,
+DeepSeek `reasoning_content`) kayda ve incelemeye yazılır.
+
+## Anatomi ve araçlar
+
+| Anatomi | Seviye | Araçlar |
+|---|---|---|
+| `raw` | 0 | yok; harness cevaptaki adlı kod bloklarını dosyaya yazar |
+| `files` | 1 | `read_file`, `list_dir`, `search`, `write_file`, `edit_file`, `delete_file`, `update_plan` |
+| `bash` | 2 | `files` + `bash` |
+| `full` | 3 | `bash` + `fetch_url` |
+
+Okuma, arama ve plan araçları sormadan çalışır; yazma, komut ve ağ araçları izin
+ister (çalışma dizini dışı her zaman reddedilir). Her araç ne yapacağını
+("README.md · satır 1–40") ve sonucunu ("40 satır", "çıkış kodu 1") kayda yazar.
 
 ## Sohbet ve görev sonrası inceleme
 
@@ -61,8 +117,9 @@ Metin parçalarının sayısı token sayısı değildir; usage yine sağlayıcı
 bilgisinden gelir. Modelin araç öncesi kullanıcıya yönelik açıklaması akabilir;
 araç JSON argümanları, sonuçları ve reasoning akışı gösterilmez.
 
-`ask` ve `chat` araç argümanlarını/çıktılarını sohbetin içine dökmez. Tur özeti tam
-ekranda sağ akış panelinde, sade çıktıda rapor yolu ile birlikte gösterilir.
+Sohbet araç argümanlarını/çıktılarını ekrana dökmez; her araç için yalnız ne olduğu
+tek satırda görünür ("✓ read_file · 40 satır"). Tur özeti tam ekranda sağ akış
+panelinde, sade çıktıda rapor yolu ile birlikte gösterilir.
 JSONL olayları geldikçe saklanır;
 her tur sonunda bütün oturumun yeni bir HTML anlık görüntüsü oluşturulur.
 `/inspect` son görüntüyü tarayıcıda açar. `inspect` komutu tarayıcıyı yalnız
@@ -71,11 +128,16 @@ Var olan dosyalar ezilmez; otomatik hedef doluysa numaralı yeni ad kullanılır
 HTML yereldir; sunucu, internet, JavaScript veya harici kaynak gerektirmez.
 `demo` açıkça sahte senaryodur; eski ayrıntılı terminal gösterimini ve HTML raporunu sunar.
 
-İncelemede istem, model/effort, sıralı model ve araç olayları, çağrı kimliği,
-argümanlar, tam araç sonucu/hatası ve süreler bulunur. Ayrıntılar tıklama veya
-klavyede Tab + Enter ile açılır. Sağlayıcı bildirirse girdi/çıktı ve cache/reasoning
-tokenları da görünür. Eksik ölçüm `—` olarak gösterilir; sıfır değildir. Kısmi
-kullanımlardan tam tur toplamı ya da TPS üretilmez.
+İnceleme her tur için bir **koşu sayfasıdır**: özet kutuları; kayıttan otomatik
+çıkan bulgular (sürenin ne kadarı model beklemesi, izin beklemesi, en uzun adım,
+ne yaptığını yazmayan adımlar, geçmişin her adımda yeniden gönderilmesi ve
+önbellek, hatalar, değişen dosyalar); model, araç türleri ve izin için ayrı
+şeritli bir **zaman çizelgesi**; adım başına girdi tokenının ne kadarının tekrar,
+ne kadarının yeni olduğu; düşünce özeti ve araç çipleriyle adım kartları; planın
+ilerleyişi ve dosya tablosu. Ham olay kaydının tamamı (bağlam, argümanlar, tam
+araç sonuçları) her turun altında kapalı durur. Dosya başına token **tahmindir**
+(≈); adım toplamları sağlayıcının ölçümüdür. Eksik ölçüm `—` olarak gösterilir;
+sıfır değildir. Kısmi kullanımlardan tam toplam üretilmez, "en az" denir.
 
 **Ortalama token/sn**, çıktı tokenı / toplam model çağrısı süresidir; saf üretim
 hızı değildir. Model süresi ağ, kimlik doğrulama ve sağlayıcı beklemesini de
