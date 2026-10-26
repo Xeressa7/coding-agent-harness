@@ -12,6 +12,7 @@ from harness.core.events import (
     ModelReplied,
     ModelStarted,
     ModelTextDelta,
+    PermissionRequested,
     TaskFinished,
     TaskStarted,
     ToolFinished,
@@ -144,6 +145,9 @@ def _event_html(event: Event) -> str:
             for call in event.tool_calls:
                 detail += f"<h4>Araç isteği: {escape(call.name)} · {escape(call.id)}</h4>"
                 detail += _pre(call.arguments)
+        case PermissionRequested(call=call):
+            title = f"İzin istendi · {call.name} · {call.id}"
+            detail = _pre(call.arguments)
         case ToolStarted(call=call):
             title = f"Araç başladı · {call.name} · {call.id}"
             detail = _pre(call.arguments)

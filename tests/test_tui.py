@@ -10,7 +10,7 @@ from textual.events import MouseScrollDown
 from textual.widgets import Button
 
 from harness.cli.commands import ChatSession
-from harness.cli.tui import ChatMessage, ComposeInput, HarnessApp
+from harness.cli.tui import ChatMessage, ComposeInput, HarnessApp, PermissionDialog
 from harness.core.anatomy import get_preset
 from harness.core.events import TaskFinished, TaskStarted
 from harness.core.session_log import read_session
@@ -107,6 +107,39 @@ async def test_initial_demo_task_runs_after_screen_mount(tmp_path: Path) -> None
         assert not app.busy and not app.failed
         assert [c.role for c in app.query(ChatMessage)] == ["Sen", "Ajan"]
         assert len(model.received) == 1 and app.report is not None
+
+
+def dialog_open(app: HarnessApp) -> bool:
+    return isinstance(app.screen, PermissionDialog)
+
+
+async def test_permission_dialog_session_grant_skips_the_second_question(tmp_path: Path) -> None:
+    def write(call_id: str, text: str) -> AssistantMessage:
+        arguments = f'{{"path": "not.txt", "content": "{text}"}}'
+        return AssistantMessage(
+            text="", tool_calls=(ToolCall(id=call_id, name="write_file", arguments=arguments),)
+        )
+
+    model = ScriptedLLM([write("c1", "bir"), write("c2", "iki"), AssistantMessage(text="Yazdım.")])
+    app = make_app(model, tmp_path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.submit("yaz")
+        for _ in range(50):
+            await pilot.pause()
+            if dialog_open(app):
+                break
+        assert dialog_open(app)
+        await pilot.click("#always")
+        # Takılmak yerine başarısız ol: ikinci bir soru açılırsa tur hiç bitmez.
+        for _ in range(50):
+            await pilot.pause()
+            if not app.busy or dialog_open(app):
+                break
+        assert not dialog_open(app)
+        assert not app.busy and not app.failed
+    assert (tmp_path / "not.txt").read_text(encoding="utf-8") == "iki"
+    kinds = [e.kind for e in read_session(app.session_log.path)]
+    assert kinds.count("permission_requested") == 1
 
 
 async def test_enter_send_shift_enter_multiline_and_history(tmp_path: Path) -> None:

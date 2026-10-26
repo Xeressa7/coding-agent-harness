@@ -13,6 +13,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
+from textual.screen import ModalScreen
 from textual.theme import Theme
 from textual.widgets import Button, Markdown, Static, TextArea
 from textual.widgets.markdown import MarkdownStream
@@ -20,6 +21,7 @@ from textual.worker import Worker, WorkerCancelled
 
 from harness.cli.commands import ChatSession, is_command
 from harness.cli.inspector import code_blocks_summary, seconds, summary_items, write_report
+from harness.cli.render import PermissionChoice
 from harness.core.agent import Agent
 from harness.core.events import (
     CodeBlocksSaved,
@@ -28,12 +30,14 @@ from harness.core.events import (
     ModelReplied,
     ModelStarted,
     ModelTextDelta,
+    PermissionRequested,
     TaskFinished,
     TaskStarted,
     ToolFinished,
     ToolStarted,
 )
 from harness.core.session_log import SessionLogger
+from harness.messages import ToolCall
 
 
 class ComposeInput(TextArea):
@@ -88,6 +92,32 @@ class ChatMessage(Vertical):
 
     async def on_unmount(self) -> None:
         await self.close_stream()
+
+
+class PermissionDialog(ModalScreen[PermissionChoice]):
+    """İzin katmanının "sor" dediği araç çağrısını gösterir; sonuç izin ver/reddet/oturum boyu."""
+
+    def __init__(self, call: ToolCall) -> None:
+        super().__init__()
+        self._call = call
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="permission-dialog"):
+            yield Static(Text(f"İzin isteniyor: {self._call.name}"), id="permission-title")
+            yield Static(Text(self._call.arguments), id="permission-args")
+            with Horizontal(id="permission-actions"):
+                yield Button("Reddet", id="deny")
+                yield Button("Oturum boyu izin ver", id="always")
+                yield Button("İzin ver", id="allow", variant="primary")
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        match event.button.id:
+            case "allow":
+                self.dismiss("allow")
+            case "always":
+                self.dismiss("always")
+            case _:
+                self.dismiss("deny")
 
 
 class HarnessApp(App[None]):
@@ -326,7 +356,13 @@ class HarnessApp(App[None]):
         self._reply = None
         try:
             async with aclosing(self.agent.run(question)) as stream:
-                async for event in stream:
+                send: bool | None = None
+                while True:
+                    try:
+                        event = await stream.asend(send)
+                    except StopAsyncIteration:
+                        break
+                    send = None
                     self.session_log.write(event)
                     events_seen.append(event)
                     match event:
@@ -353,6 +389,13 @@ class HarnessApp(App[None]):
                             if self._reply is not None:
                                 await self._reply.finish(text)
                             await self.add_flow(f"✓ Model · {seconds(duration)}")
+                        case PermissionRequested(call=call):
+                            self.set_status("İzin bekleniyor…")
+                            await self.add_flow(f"? izin isteniyor · {call.name}")
+                            choice = await self.push_screen_wait(PermissionDialog(call))
+                            if choice == "always":
+                                self.agent.permissions.grant(call.name)
+                            send = choice != "deny"
                         case ToolStarted(call=call):
                             self.set_status("Araç çalışıyor…")
                             await self.add_flow(f"● {call.name}")

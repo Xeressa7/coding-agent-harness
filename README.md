@@ -5,9 +5,13 @@ düzenleme, arama ve terminal araçları verip bunları denetimli bir döngüde
 çalıştıran komut satırı uygulaması. Tekirdağ Namık Kemal Üniversitesi
 Bilgisayar Mühendisliği bitirme projesi.
 
-> Durum: çekirdek döngü, `read_file`, çok turlu terminal sohbeti ve görev sonrası
-> yerel inceleme ekranı var. Gerçek model ChatGPT planı üzerinden (Responses API)
-> bağlı. İzin katmanı ve yazma/düzenleme/komut araçları henüz yok.
+> Durum: çekirdek döngü, bağlam yöneticisi (uzun araç çıktısını kırpar), izin
+> katmanı (ALLOW/ASK/DENY, oturum boyu izin ver), `read_file`/`write_file`/
+> `edit_file`/`search`/`bash` araçları, çok turlu terminal sohbeti, görev
+> sonrası yerel inceleme ekranı ve küçük bir görev seti üzerinde çalışan
+> değerlendirme koşucusu (`tasks/`, `core/evaluation.py`) var. Gerçek model
+> ChatGPT planı üzerinden (Responses API) bağlı; OpenAI uyumlu Chat
+> Completions adaptörü (Ollama için) henüz CLI'a bağlanmadı.
 
 ## Kullanım
 
@@ -100,6 +104,9 @@ messages.py     Herkesin konuştuğu ortak veri tipleri
 
 Kural `pyproject.toml` içindeki import-linter sözleşmesinde tanımlıdır ve
 `tests/test_architecture.py` tarafından her test koşumunda denetlenir.
+
+`tasks/` dört katmanın dışındadır: her alt klasör bir değerlendirme görevi
+(başlangıç durumu + gizli testler), biçimi `tasks/README.md`'de anlatılır.
 
 ## Geliştirme
 

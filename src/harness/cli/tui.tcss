@@ -65,4 +65,18 @@ Screen {
 .compact #keys { display: none; }
 .compact #chat-heading, .compact #flow-title { height: 1; padding: 0 1; }
 .compact #chat-title { height: 1; }
+PermissionDialog { align: center middle; }
+#permission-dialog {
+    width: 74;
+    height: auto;
+    max-height: 80%;
+    padding: 1 2;
+    background: $surface;
+    border: round $primary;
+}
+#permission-title { text-style: bold; color: $primary; margin-bottom: 1; }
+#permission-args { color: $text-muted; margin-bottom: 1; }
+#permission-actions { height: 3; align: right middle; }
+#permission-actions Button { min-width: 12; margin-left: 1; }
+#permission-actions #always { min-width: 22; }
 .compact #latest { height: 1; min-height: 1; border: none; }

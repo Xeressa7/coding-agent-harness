@@ -13,6 +13,7 @@ from harness.cli.commands import ChatSession, is_command
 from harness.core.anatomy import get_preset
 from harness.core.config import project_sessions_dir
 from harness.core.events import ModelReplied, TaskFinished, TaskStarted, ToolFinished
+from harness.core.permissions import Decision
 from harness.core.session_log import (
     SessionLogger,
     history_from_events,
@@ -171,6 +172,28 @@ async def test_new_starts_empty_history_in_a_new_log(tmp_path: Path) -> None:
     assert reply.reset and not reply.transcript
     assert session.log.path != old_log
     assert len(session.agent.history) == 1  # yalnız talimat
+
+
+async def test_session_grants_survive_model_switch_but_not_a_new_or_resumed_session(
+    tmp_path: Path,
+) -> None:
+    session, built = make_session(tmp_path)
+    write = ToolCall(id="c1", name="write_file", arguments='{"path": "a.txt", "content": "x"}')
+    await turn(session, "merhaba")  # /resume'un bulacağı bir kayıt olsun
+    assert session.agent.permissions.decide(write) is Decision.ASK
+
+    session.agent.permissions.grant("write_file")
+    await session.run("/model sol")
+    assert built[-1] == ("sol", None)  # ajan gerçekten yeniden kuruldu
+    assert session.agent.permissions.decide(write) is Decision.ALLOW
+
+    await session.run("/new")
+    assert session.agent.permissions.decide(write) is Decision.ASK
+
+    session.agent.permissions.grant("write_file")
+    reply = await session.run("/resume 1")
+    assert reply.reset
+    assert session.agent.permissions.decide(write) is Decision.ASK
 
 
 async def test_resume_continues_an_old_session_in_its_own_log(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
 """Responses adaptörü: doğru istek gövdesi, akıştan doğru mesaj, hatada anlaşılır hata."""
 
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -8,6 +9,7 @@ import pytest
 
 from harness.core.agent import Agent
 from harness.core.events import TaskFinished
+from harness.core.permissions import PermissionManager
 from harness.llm.base import LLMClient
 from harness.llm.responses import ResponsesError, ResponsesLLM, build_request
 from harness.messages import (
@@ -180,11 +182,14 @@ async def test_http_error_is_reported() -> None:
             await ResponsesLLM(FixedToken(), "m", http).complete([UserMessage(text="x")])
 
 
-async def test_real_adapter_plugs_into_the_same_loop() -> None:
+async def test_real_adapter_plugs_into_the_same_loop(tmp_path: Path) -> None:
     # Döngü değişmeden, sahte model yerine Responses adaptörüyle çalışır.
     async with fake_api(stream(completed(text_item("Python 3.12")))) as http:
         llm: LLMClient = ResponsesLLM(FixedToken(), "m", http)
-        agent = Agent(llm, ToolRegistry([]), system_prompt="kural")
+        tools = ToolRegistry([])
+        agent = Agent(
+            llm, tools, system_prompt="kural", permissions=PermissionManager(tmp_path, tools)
+        )
         events = [event async for event in agent.run("sürüm?")]
 
     assert isinstance(events[-1], TaskFinished)

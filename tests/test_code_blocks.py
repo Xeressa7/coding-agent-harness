@@ -9,6 +9,7 @@ from harness.core.agent import Agent
 from harness.core.anatomy import get_preset
 from harness.core.code_blocks import CodeBlock, extract_code_blocks
 from harness.core.events import CodeBlocksSaved, ModelReplied, TaskFinished
+from harness.core.permissions import PermissionManager
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage
 
@@ -58,7 +59,15 @@ def test_text_without_blocks_gives_nothing() -> None:
 async def run(anatomy_name: str, text: str, root: Path) -> list[object]:
     anatomy = get_preset(anatomy_name)
     model = ScriptedLLM([AssistantMessage(text=text)])
-    agent = Agent(model, anatomy.tool_registry(root), "talimat", anatomy=anatomy, root=root)
+    tools = anatomy.tool_registry(root)
+    agent = Agent(
+        model,
+        tools,
+        "talimat",
+        permissions=PermissionManager(root, tools),
+        anatomy=anatomy,
+        root=root,
+    )
     return [event async for event in agent.run("gemi yap")]
 
 

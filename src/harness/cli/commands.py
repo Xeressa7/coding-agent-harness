@@ -12,6 +12,7 @@ from pathlib import Path
 from harness.core.agent import Agent
 from harness.core.anatomy import Anatomy
 from harness.core.events import ModelReplied, TaskStarted
+from harness.core.permissions import PermissionManager
 from harness.core.session_log import (
     SessionLogger,
     SessionSummary,
@@ -65,9 +66,10 @@ def is_command(text: str) -> bool:
 class ChatSession:
     """Sohbetin o anki modeli, effort'u, ajanı ve kayıt dosyası.
 
-    Model ya da effort değişince ajan aynı geçmişle yeniden kurulur; her tur
-    TaskStarted'a kendi modelini yazdığı için kayıt hangi turun hangi modelle
-    koştuğunu gösterir.
+    Model ya da effort değişince ajan aynı geçmişle ve aynı izinlerle yeniden
+    kurulur; her tur TaskStarted'a kendi modelini yazdığı için kayıt hangi turun
+    hangi modelle koştuğunu gösterir. "Oturum boyu" izinler /new ve /resume ile
+    sıfırlanır: ikisi de başka bir oturumdur.
     """
 
     def __init__(
@@ -92,6 +94,8 @@ class ChatSession:
         self._models: list[ModelInfo] | None = None
         self.sessions_dir = sessions_dir
         self.log = new_session_log(sessions_dir)
+        self.tools = anatomy.tool_registry(root)
+        self.permissions = PermissionManager(root, self.tools)
         self.agent = self._build_agent([])
 
     @property
@@ -101,8 +105,9 @@ class ChatSession:
     def _build_agent(self, history: list[Message]) -> Agent:
         return Agent(
             llm=self._make_llm(self.model, self.effort),
-            tools=self.anatomy.tool_registry(self.root),
+            tools=self.tools,
             system_prompt=self.system_prompt,
+            permissions=self.permissions,
             model_label=self.model,
             effort=self.effort,
             anatomy=self.anatomy,
@@ -129,6 +134,7 @@ class ChatSession:
                 return await self._effort(argument)
             case "/new":
                 self.log = new_session_log(self.sessions_dir)
+                self.permissions = PermissionManager(self.root, self.tools)
                 self.agent = self._build_agent([])
                 return CommandReply(f"Yeni oturum · {self.label}", reset=True)
             case "/sessions":
@@ -228,6 +234,7 @@ class ChatSession:
             return CommandReply(f"Oturum okunamadı: {exc}")
 
         self.log = SessionLogger(path)
+        self.permissions = PermissionManager(self.root, self.tools)
         self.agent = self._build_agent(history_from_events(events))
         transcript: list[tuple[str, str]] = []
         anatomies: set[str] = set()
