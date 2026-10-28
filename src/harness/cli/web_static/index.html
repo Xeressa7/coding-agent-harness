@@ -37,6 +37,23 @@
     overflow-y: auto;
     padding: 16px;
   }
+  #welcome {
+    max-width: 60ch;
+    margin: 48px auto 0;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.7;
+  }
+  #welcome b { display: block; color: var(--text); font-size: 18px; margin-bottom: 10px; }
+  #welcome .example {
+    display: inline-block;
+    margin-top: 16px;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  #welcome .example:hover { border-color: var(--primary); color: var(--primary); }
   .msg { margin-bottom: 14px; max-width: 70ch; }
   .msg .role { color: var(--primary); font-weight: 600; margin-bottom: 2px; }
   .msg.user { border-left: 2px solid var(--primary); padding-left: 10px; }
@@ -94,7 +111,14 @@
 </head>
 <body>
 <header>HARNESS &middot; <b id="conn">bağlanıyor…</b></header>
-<div id="log"></div>
+<div id="log">
+  <div id="welcome">
+    <b>Birlikte ne yapalım?</b>
+    Aşağıya bir görev yaz; dosya okuma/yazma, arama ve komut çalıştırma gibi
+    riskli adımlarda sana sorulur. Yanıtlar ve araç çağrıları burada akar.
+    <div class="example" id="example">Bu proje hangi Python sürümünü istiyor, bağımlılıkları neler?</div>
+  </div>
+</div>
 <div id="permission"></div>
 <div id="composer">
   <input id="task" type="text" placeholder="Görevini yaz…" autocomplete="off" />
@@ -102,6 +126,7 @@
 </div>
 <script>
 const log = document.getElementById("log");
+const welcome = document.getElementById("welcome");
 const permissionBox = document.getElementById("permission");
 const taskInput = document.getElementById("task");
 const sendButton = document.getElementById("send");
@@ -110,7 +135,12 @@ const connStatus = document.getElementById("conn");
 const proto = location.protocol === "https:" ? "wss:" : "ws:";
 const ws = new WebSocket(`${proto}//${location.host}/ws`);
 
+function hideWelcome() {
+  if (welcome) welcome.remove();
+}
+
 function addMessage(role, text, cls) {
+  hideWelcome();
   const div = document.createElement("div");
   div.className = "msg" + (cls ? " " + cls : "");
   div.innerHTML = `<div class="role">${role}</div><div></div>`;
@@ -208,7 +238,12 @@ sendButton.onclick = submit;
 taskInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") submit();
 });
+document.getElementById("example").onclick = () => {
+  taskInput.value = document.getElementById("example").textContent;
+  submit();
+};
 sendButton.disabled = true;
+taskInput.focus();
 </script>
 </body>
 </html>

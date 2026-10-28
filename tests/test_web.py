@@ -35,6 +35,7 @@ def test_index_page_is_served(tmp_path: Path) -> None:
 
     assert response.status_code == 200  # type: ignore[reportUnknownMemberType]
     assert "Harness" in response.text  # type: ignore[reportUnknownMemberType]
+    assert "Birlikte ne yapalım?" in response.text  # type: ignore[reportUnknownMemberType]
 
 
 def test_events_stream_and_task_finishes(tmp_path: Path) -> None:
