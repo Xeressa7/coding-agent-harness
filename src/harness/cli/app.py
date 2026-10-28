@@ -3,6 +3,7 @@
 import asyncio
 import re
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -31,6 +32,8 @@ from harness.core.events import (
 )
 from harness.core.permissions import PermissionManager
 from harness.core.session_log import SessionLogger, read_session
+from harness.llm.base import LLMClient
+from harness.llm.chat_completions import ChatCompletionsLLM
 from harness.llm.chatgpt_auth import AuthError, ChatGPTTokens, login
 from harness.llm.responses import ModelInfo, ResponsesError, ResponsesLLM, list_models
 from harness.llm.scripted import ScriptedLLM
@@ -454,6 +457,68 @@ def chat(
     except KeyboardInterrupt as exc:
         console.print("Durduruldu.")
         raise typer.Exit(130) from exc
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option(help="Dinlenecek adres")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Dinlenecek port")] = 8765,
+    demo: Annotated[
+        bool, typer.Option("--demo", help="Sahte modelle, giriş gerektirmeden dener")
+    ] = False,
+    ollama: Annotated[
+        bool, typer.Option("--ollama", help="ChatGPT yerine yerel Ollama/uyumlu sunucu kullanır")
+    ] = False,
+    base_url: Annotated[
+        str, typer.Option(help="--ollama ile: sunucunun taban URL'si")
+    ] = "http://localhost:11434/v1",
+    model: Annotated[
+        str | None, typer.Option(help="Model adı (--ollama ile zorunlu, yoksa kayıtlı seçim)")
+    ] = None,
+    effort: Annotated[str | None, typer.Option(help="ChatGPT effort seviyesi")] = None,
+    anatomy_name: AnatomyOption = DEFAULT_PRESET,
+) -> None:
+    """Tarayıcıda sohbet: tek sayfa + WebSocket, aynı çekirdek döngüsü üzerinden."""
+    anatomy = pick_anatomy(anatomy_name)
+    label = "web · sahte model" if demo else "web · " + ("Ollama" if ollama else "ChatGPT")
+    root = start_session(label)
+    prompt = load_system_prompt()
+
+    async def run() -> None:
+        import uvicorn
+
+        from harness.cli.web import create_app
+
+        async with httpx.AsyncClient(timeout=120) as http:
+            llm_factory: Callable[[], LLMClient]
+            if demo:
+
+                def llm_factory() -> LLMClient:
+                    return ScriptedLLM(DEMO_SCRIPT)
+            elif ollama:
+                picked_model = model or "llama3.2"
+
+                def llm_factory() -> LLMClient:
+                    return ChatCompletionsLLM(base_url, picked_model, http)
+            else:
+                settings = load_settings()
+                picked_model = model or settings.model
+                picked_effort = effort or (
+                    settings.effort if picked_model == settings.model else None
+                )
+
+                def llm_factory() -> LLMClient:
+                    return ResponsesLLM(ChatGPTTokens(http), picked_model, http, picked_effort)
+
+            web_app = create_app(anatomy, root, prompt, llm_factory)
+            console.print(f"[green]Tarayıcıda aç:[/] http://{host}:{port}")
+            config = uvicorn.Config(web_app, host=host, port=port, log_level="warning")
+            await uvicorn.Server(config).serve()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        console.print("Durduruldu.")
 
 
 @app.command(name="inspect")
