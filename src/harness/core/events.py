@@ -21,6 +21,7 @@ class TaskStarted(_Event):
     model: str | None = None
     effort: str | None = None
     anatomy: Anatomy | None = None  # None: anatomi kaydı öncesinden kalma oturum
+    root: str | None = None  # ajanın çalıştığı klasör (harita ağacı); eski kayıtta None
 
 
 class ContextAssembled(_Event):

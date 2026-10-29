@@ -11,6 +11,7 @@ parçacığında çalışır: ön yüz kullanıcıyı beklerken de akış sürer
 """
 
 import json
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,8 +20,50 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
+from harness.tools.search import SKIPPED_DIRS
+
 _POLL_SECONDS = 0.25
 _HEARTBEAT_SECONDS = 10.0
+_TREE_LIMIT = 3000
+_STATIC = {"/map.js": ("watch_map.js", "text/javascript; charset=utf-8")}
+
+
+def project_tree(log: Path, limit: int = _TREE_LIMIT) -> dict[str, Any]:
+    """Kaydın çalıştığı klasörün bugünkü ağacı (yalnız adlar; içerik okunmaz).
+
+    Harita ajanın dokunmadığı dosyaları da soluk gösterir. Klasör artık yoksa (ör.
+    deneyin geçici kopyası) ağaç boş döner; harita kayıttaki yollarla yetinir.
+    """
+    root: str | None = None
+    try:
+        with log.open(encoding="utf-8") as f:
+            for line in f:
+                event = json.loads(line)
+                if event.get("kind") == "task_started" and event.get("root"):
+                    root = str(event["root"])
+                    break
+    except (OSError, ValueError):
+        pass
+    if root is None or not Path(root).is_dir():
+        return {
+            "root": root,
+            "name": Path(root).name if root else "",
+            "entries": [],
+            "complete": False,
+        }
+    base = Path(root)
+    entries: list[str] = []
+    complete = True
+    for folder, dirs, names in os.walk(base):
+        dirs[:] = sorted(d for d in dirs if d not in SKIPPED_DIRS and not d.startswith("."))
+        relative = Path(folder).relative_to(base)
+        prefix = "" if relative == Path(".") else relative.as_posix() + "/"
+        entries += [f"{prefix}{d}/" for d in dirs]
+        entries += [f"{prefix}{n}" for n in sorted(names)]
+        if len(entries) >= limit:
+            complete = False
+            break
+    return {"root": root, "name": base.name, "entries": entries[:limit], "complete": complete}
 
 
 def list_logs(folder: Path) -> list[dict[str, Any]]:
@@ -101,6 +144,17 @@ def _handler(folder: Path) -> type[BaseHTTPRequestHandler]:
                 case "/api/sessions":
                     body = json.dumps(list_logs(folder), ensure_ascii=False).encode()
                     self._send(200, "application/json; charset=utf-8", body)
+                case "/api/tree":
+                    log = _inside(folder, (query.get("path") or [""])[0])
+                    if log is None:
+                        self._send(404, "text/plain; charset=utf-8", "kayıt yok".encode())
+                        return
+                    body = json.dumps(project_tree(log), ensure_ascii=False).encode()
+                    self._send(200, "application/json; charset=utf-8", body)
+                case path if path in _STATIC:
+                    name, content_type = _STATIC[path]
+                    body = files("harness.cli").joinpath(name).read_text(encoding="utf-8")
+                    self._send(200, content_type, body.encode())
                 case "/api/stream":
                     log = _inside(folder, (query.get("path") or [""])[0])
                     if log is None:

@@ -54,6 +54,12 @@ yazdıkça süzülen bir pencere (↑/↓, Enter, Esc), sade akışta numaralı 
 - `/watch`: canlı paneli tarayıcıda açar. Sohbet terminalde sürer, panel aynı
   kaydı okuyup akıtır (modele giden bağlam, düşünce, araçlar, token ve önbellek
   payı); hiçbir şey kaybolmaz, onaylar terminalde verilir.
+  **Harita** sekmesi ajanın proje ağacında nerede dolaştığını gösterir: okunan,
+  aranan, düzenlenen dosyalar sırayla yaylarla bağlanır, aramalar eşleştiği
+  dosyalara kesik çizgiyle açılır, dosya yanındaki şerit okunan satır aralıklarını
+  gösterir (koyu yer: tekrar okunmuş). Zaman çubuğuyla video gibi geri sarılır
+  (boşluk: oynat, ←/→: önceki/sonraki eylem); konum adrese yazılır (`&t=8`),
+  o an link olarak paylaşılabilir. Sağda o adımda modelin ne düşündüğü durur.
 - `/theme`: renk teması (koyu, açık, yüksek-kontrast, renk-körü; `~/.harness/theme.toml`
   ile kişisel). Tam ekranda Ctrl+T sıradakine geçer. `NO_COLOR` sade akışı renksiz yapar.
 - `/status` · `/tools` · `/usage` (`/cost`) · `/new` (`/clear`) · `/inspect` · `/exit` (`/quit`).

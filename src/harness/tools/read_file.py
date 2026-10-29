@@ -47,5 +47,11 @@ class ReadFile(Tool[ReadFileParams]):
         return ToolOutput(
             content,
             summary=f"{len(shown)} satır{partial}",
-            details={"path": params.path, "lines": len(shown), "total_lines": len(lines)},
+            details={
+                "path": params.path,
+                "lines": len(shown),
+                "total_lines": len(lines),
+                "start": start,  # gerçekte gösterilen aralık (istenen değil): harita şeridi
+                "end": start + len(shown) - 1,
+            },
         )

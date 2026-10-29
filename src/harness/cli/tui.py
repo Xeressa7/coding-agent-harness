@@ -20,6 +20,7 @@ from textual.widgets.option_list import Option
 from textual.worker import Worker, WorkerCancelled
 
 from harness.cli.commands import (
+    STEP_LIMIT_HINT,
     ChatSession,
     Choice,
     CommandReply,
@@ -616,7 +617,7 @@ class HarnessApp(App[None]):
                             self.set_status(
                                 {
                                     "done": "Tamamlandı · Enter ile yeni mesaj",
-                                    "step_limit": "Adım sınırı · yeni mesaj yazabilirsin",
+                                    "step_limit": STEP_LIMIT_HINT,
                                     "cancelled": "Durduruldu · /new ya da /resume ile devam et",
                                     "error": "Hata · ayrıntılar kayıtta",
                                 }[reason]

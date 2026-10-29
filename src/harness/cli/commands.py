@@ -88,6 +88,10 @@ ALIASES = {
 }
 DEFAULT_EFFORT_WORDS = {"varsayılan", "default", "none", "yok"}
 SESSION_LIMIT = 10
+# Sohbette bir mesajın en çok kaç model adımı süreceği. Keşif görevleri 20'yi aşıyor
+# (2026-10-29 gerçek koşu: "repoyu incele" 20 adımda sonuca varmadan durdu).
+CHAT_STEP_LIMIT = 50
+STEP_LIMIT_HINT = "Adım sınırı doldu; geçmiş korundu: kaldığı yerden sürmesi için “devam” yaz."
 
 PickerKind = Literal["model", "effort", "connect", "anatomy", "resume", "theme"]
 
@@ -215,6 +219,7 @@ class ChatSession:
             anatomy=self.anatomy,
             root=self.root,
             history=history,
+            max_steps=CHAT_STEP_LIMIT,
         )
 
     def _rebuild(self) -> None:

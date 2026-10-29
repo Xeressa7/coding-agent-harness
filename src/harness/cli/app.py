@@ -36,6 +36,7 @@ from rich.theme import ThemeStackError
 
 from harness.cli.commands import (
     DEFAULT_EFFORT_WORDS,
+    STEP_LIMIT_HINT,
     ChatSession,
     Choice,
     CommandReply,
@@ -539,6 +540,8 @@ def _after_turn(events: list[Event], log: SessionLogger, quiet: bool) -> Path | 
     if not quiet:
         items = summary_items(events)
         console.print(Text(" · ".join(f"{label}: {value}" for label, value in items)))
+        if any(isinstance(e, TaskFinished) and e.reason == "step_limit" for e in events):
+            console.print(Text(STEP_LIMIT_HINT, style="h.warn"))
     try:
         report = write_report(log.path)
     except (OSError, ValueError) as exc:

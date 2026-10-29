@@ -27,6 +27,9 @@ _MAX_RESULTS = 200
 _MAX_LINE_CHARS = 300
 
 
+_MAX_PATHS = 100
+
+
 class SearchParams(BaseModel):
     pattern: str | None = Field(
         default=None, description="İçerikte aranacak regex; boşsa yalnız dosya adları listelenir"
@@ -62,7 +65,10 @@ class Search(Tool[SearchParams]):
             try:
                 regex = re.compile(params.pattern, re.IGNORECASE if params.ignore_case else 0)
             except re.error as e:
-                raise ToolError(f"Geçersiz regex: {e}") from e
+                raise ToolError(
+                    f"Geçersiz regex: {e}. pattern bir düzenli ifadedir; dosya listesi için "
+                    "pattern verme, yalnız glob kullan (ör. glob='*.md')."
+                ) from e
 
         results: list[str] = []
         total = 0
@@ -85,7 +91,12 @@ class Search(Tool[SearchParams]):
                     if len(results) < _MAX_RESULTS:
                         results.append(f"{rel}:{number}: {line[:_MAX_LINE_CHARS]}")
 
-        details = {"matches": total, "files": len(matched_files), "truncated": total > len(results)}
+        details = {
+            "matches": total,
+            "files": len(matched_files),
+            "truncated": total > len(results),
+            "paths": sorted(matched_files)[:_MAX_PATHS],  # harita: arama hangi dosyalara açıldı
+        }
         if not results:
             return ToolOutput("Eşleşme yok.", summary="eşleşme yok", details=details)
         if total > len(results):

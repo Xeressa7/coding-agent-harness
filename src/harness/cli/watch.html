@@ -67,6 +67,86 @@
   .finish { padding: 8px 14px; font-size: 13px; background: var(--surface-2); }
   .spinner::after { content: "…"; animation: blink 1s infinite; }
   @keyframes blink { 50% { opacity: .2; } }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button { border: 1px solid var(--border); background: none; color: var(--muted); border-radius: 6px;
+                 padding: 3px 12px; font: inherit; cursor: pointer; }
+  .tabs button.on { color: var(--text); background: var(--surface-2); border-color: var(--accent); }
+  /* ---- gezinti haritası ---- */
+  .map-view { display: flex; flex-direction: column; height: calc(100vh - 50px); min-width: 0; }
+  .map-view:focus { outline: none; }
+  .map-top { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 8px 16px;
+             border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .map-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+  .legend-item { display: inline-flex; align-items: center; gap: 5px; }
+  .map-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-height: 0; }
+  .map-canvas { position: relative; overflow: auto; }
+  .map-arcs { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
+  .map-rows { position: relative; min-width: 520px; }
+  .map-row { position: absolute; left: 0; right: 0; height: 26px; display: flex; align-items: center; gap: 6px;
+             white-space: nowrap; cursor: pointer; font-size: 13px; padding-right: 10px; }
+  .map-row:hover { background: var(--surface-2); }
+  .map-row.current { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .map-row.selected { box-shadow: inset 0 0 0 1px var(--accent); }
+  .map-row.t-section { cursor: default; padding-left: 12px; }
+  .map-row.t-section:hover { background: none; }
+  .section { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .twisty { width: 14px; flex: none; border: 0; background: none; color: var(--muted); padding: 0; font: inherit; cursor: pointer; }
+  .name { overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 46ch; }
+  .t-action .name { max-width: 60ch; }
+  .name.cold { color: var(--muted); opacity: .55; }
+  .name.deleted { text-decoration: line-through; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); display: inline-block; }
+  .dot.cold { background: transparent; box-shadow: inset 0 0 0 1px var(--border); }
+  .k-read { background: var(--accent); } .k-edit { background: var(--warn); } .k-write { background: var(--ok); }
+  .k-delete { background: var(--err); } .k-search, .k-hit { background: var(--harness); }
+  .k-list { background: color-mix(in srgb, var(--accent) 45%, var(--muted)); }
+  .k-bash, .k-net { background: var(--text); } .k-plan, .k-other, .k-none { background: var(--muted); }
+  .k-prompt, .k-system { background: var(--ok); }
+  .visits { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .visits .err { color: var(--err); font-weight: 600; }
+  .visits.hit { color: var(--harness); }
+  .strip { position: relative; width: 140px; height: 8px; background: var(--surface-2); border-radius: 3px;
+           flex: none; overflow: hidden; margin-left: auto; }
+  .strip .range { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .38; }
+  .strip .edit-tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--warn); }
+  .arc { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+  .arc.old { opacity: .16; } .arc.recent { opacity: .55; } .arc.now { stroke-width: 2.5; opacity: 1; }
+  .arc.hitline { stroke: var(--harness); stroke-dasharray: 3 3; opacity: .85; }
+  .arrow-head { fill: var(--accent); }
+  .map-side { border-left: 1px solid var(--border); padding: 12px 14px; overflow: auto; font-size: 13px; }
+  .map-side h3 { font-size: 14px; margin: 6px 0; overflow-wrap: anywhere; }
+  .map-side h4 { font-size: 12px; margin: 14px 0 4px; color: var(--accent); }
+  .meta.err { color: var(--err); }
+  .linklike { border: 0; background: none; color: var(--accent); padding: 0; font: inherit; cursor: pointer; }
+  .visit-item { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--text);
+                padding: 3px 4px; border-radius: 4px; font: 12px/1.4 var(--mono); cursor: pointer; }
+  .visit-item:hover { background: var(--surface-2); }
+  .map-bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--border);
+             background: var(--surface); }
+  .btn { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 6px;
+         padding: 3px 9px; font: inherit; cursor: pointer; }
+  .live-btn.on { color: var(--ok); border-color: var(--ok); }
+  .map-track { position: relative; flex: 1; height: 28px; min-width: 120px; }
+  .map-marks { position: absolute; inset: 0; pointer-events: none; }
+  .map-marks i { position: absolute; display: block; }
+  .seg { top: 10px; height: 8px; background: var(--surface-2); border-radius: 2px; }
+  .tick { top: 7px; width: 2px; height: 14px; }
+  .mark { top: 0; width: 2px; height: 28px; }
+  .m-error { background: var(--err); } .m-harness { background: var(--harness); }
+  .m-turn { background: var(--text); opacity: .5; } .m-done { background: var(--ok); } .m-stop { background: var(--warn); }
+  .map-slider { position: absolute; inset: 0; width: 100%; margin: 0; background: transparent;
+                -webkit-appearance: none; appearance: none; }
+  .map-slider::-webkit-slider-runnable-track { height: 28px; background: transparent; }
+  .map-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 3px; height: 28px; background: var(--accent); }
+  .map-slider::-moz-range-thumb { width: 3px; height: 28px; background: var(--accent); border: 0; border-radius: 0; }
+  .map-time { font: 12px var(--mono); color: var(--muted); white-space: nowrap; }
+  @media (max-width: 760px) {
+    .map-view { height: auto; }
+    .map-body { grid-template-columns: minmax(0, 1fr); }
+    .map-canvas { height: 60vh; }
+    .map-side { border-left: 0; border-top: 1px solid var(--border); }
+    .map-bar { flex-wrap: wrap; }
+  }
   @media (max-width: 760px) {
     .layout { grid-template-columns: minmax(0, 1fr); }
     header { position: static; }
@@ -77,6 +157,7 @@
 <body>
 <header>
   <h1><span class="dot" id="dot"></span>Harness canlı panel</h1>
+  <nav class="tabs"><button id="tab-flow" class="on">Akış</button><button id="tab-map">Harita</button></nav>
   <div class="stats" id="stats"></div>
 </header>
 <div class="layout">
@@ -85,7 +166,9 @@
     <div id="logs"></div>
   </aside>
   <main id="main"><div class="empty">Kayıt bekleniyor…</div></main>
+  <section id="mapview" class="map-view" hidden></section>
 </div>
+<script src="/map.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -102,6 +185,17 @@ const LAYERS = { loop_guard: "Takılma uyarısı" };
 
 let source = null, current = null, logs = [];
 let state;
+const map = window.HarnessMap.create(document.getElementById("mapview"));
+
+function showView(view) {
+  const onMap = view === "map";
+  $("main").hidden = onMap; $("mapview").hidden = !onMap;
+  $("tab-flow").classList.toggle("on", !onMap); $("tab-map").classList.toggle("on", onMap);
+  const url = new URL(location.href); url.searchParams.set("view", view); history.replaceState(null, "", url);
+  if (onMap) { map.visible(); $("mapview").focus(); }
+}
+$("tab-flow").onclick = () => showView("flow");
+$("tab-map").onclick = () => showView("map");
 
 function reset() {
   state = { turn: null, steps: {}, tools: {}, input: 0, output: 0, cached: 0, cacheKnown: false,
@@ -273,14 +367,17 @@ function handle(e) {
 
 function open(path) {
   if (source) source.close();
-  current = path; reset(); drawLogs();
+  current = path; reset(); map.reset(path); drawLogs();
   const url = new URL(location.href); url.searchParams.set("path", path); history.replaceState(null, "", url);
   source = new EventSource("/api/stream?path=" + encodeURIComponent(path));
   source.onopen = () => $("dot").classList.add("live");
   source.onerror = () => $("dot").classList.remove("live");
   source.onmessage = (m) => {
     const nearBottom = innerHeight + scrollY >= document.body.scrollHeight - 120;
-    try { handle(JSON.parse(m.data)); } catch (err) { console.error(err); }
+    let event;
+    try { event = JSON.parse(m.data); } catch (err) { console.error(err); return; }
+    try { handle(event); } catch (err) { console.error(err); }
+    map.append(event);
     if (nearBottom) scrollTo(0, document.body.scrollHeight);
   };
 }
@@ -303,6 +400,7 @@ async function refresh() {
 }
 
 reset();
+if (new URL(location.href).searchParams.get("view") === "map") showView("map");
 const asked = new URL(location.href).searchParams.get("path");
 if (asked) { $("follow").checked = false; open(asked); }
 refresh();

@@ -102,6 +102,7 @@ class Agent:
             model=self._model_label,
             effort=self._effort,
             anatomy=self._anatomy,
+            root=str(self._root) if self._root else None,
             timestamp=datetime.now(UTC),
         )
         try:
