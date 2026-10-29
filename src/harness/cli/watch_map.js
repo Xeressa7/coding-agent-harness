@@ -213,6 +213,7 @@
     let events = [], compiled = compile([]), entries = [], rootName = "", treeNote = "";
     let playhead = 0, playing = false, speed = 4, live = true, lastFrame = 0;
     let selected = null, expanded = new Set(), rows = [], tree = null;
+    let imports = importIndex([]), showImports = true;
     let wanted = Number(new URL(location.href).searchParams.get("t"));  // paylaşılan an: &t=8
 
     container.replaceChildren();
@@ -222,12 +223,19 @@
       const item = el("span", "legend-item"); item.append(el("i", `dot k-${kind}`), document.createTextNode(name)); legend.append(item);
     }
     const note = el("span", "meta");
+    const importToggle = el("label", "legend-item");
+    const importBox = el("input"); importBox.type = "checkbox"; importBox.checked = true;
+    importBox.onchange = () => { showImports = importBox.checked; draw(); };
+    importToggle.append(importBox, el("i", "dot k-import"), document.createTextNode("içe aktarmalar"));
+    importToggle.title = "Odaktaki dosyanın içe aktardığı (→) ve onu içe aktaran (←) proje dosyaları";
+    legend.append(importToggle);
     top.append(legend, note);
     const body = el("div", "map-body");
     const canvas = el("div", "map-canvas");
     const lines = svg("svg", { class: "map-arcs" });
     const list = el("div", "map-rows");
-    canvas.append(lines, list);
+    const importLines = svg("svg", { class: "map-imports" });
+    canvas.append(lines, list, importLines);
     const side = el("aside", "map-side");
     body.append(canvas, side);
     const bar = el("div", "map-bar");
@@ -329,16 +337,64 @@
           if (b) lines.append(svg("path", { d: `M${x},${a.y} C${x - 40},${a.y} ${x - 40},${b.y} ${x},${b.y}`, class: "arc hitline" }));
         }
       }
+      drawImports(rowOf, current);
       drawSide(current, now);
       slider.value = playhead;
       time.textContent = `${mmss(playhead)} / ${mmss(compiled.end)}` + (current && !Number.isNaN(current.ms) ? ` · ${clock(current.ms)}` : "");
       play.textContent = playing ? "‖" : "▶";
       liveBtn.classList.toggle("on", live);
-      note.textContent = `${now.length} adım-eylem · ${treeNote}`;
+      note.textContent = [`${now.length} eylem`, readingNote(now), importNote(now), treeNote].filter(Boolean).join(" · ");
       if (current && live) {
         const row = rowOf.get(current.node);
         if (row) keepVisible(row.y);
       }
+    }
+
+    function importFocus(current) {
+      const pick = selected && selected.node && selected.node.startsWith("file:") ? selected
+        : current && current.node && current.node.startsWith("file:") ? current : null;
+      return showImports && pick && imports.size ? pick.node : null;
+    }
+
+    // Odaktaki dosyanın proje içi bağlantıları sağda yeşil yaylarla: → içe aktardıkları, ← onu içe aktaranlar.
+    function drawImports(rowOf, current) {
+      const width = list.clientWidth || 800;
+      const height = rows.length * ROW;
+      importLines.setAttribute("width", width); importLines.setAttribute("height", height);
+      importLines.replaceChildren();
+      const focus = importFocus(current);
+      if (!focus || !rowOf.has(focus)) return;
+      const a = rowOf.get(focus);
+      const x = width - 170;
+      const draw1 = (target, cls) => {
+        const b = rowOf.get(target);
+        if (!b || b === a) return;
+        const bend = Math.min(140, 14 + Math.abs(b.y - a.y) * 0.15);
+        importLines.append(svg("path", { d: `M${x},${a.y} C${x - bend},${a.y} ${x - bend},${b.y} ${x},${b.y}`, class: cls }));
+      };
+      for (const t of imports.out.get(focus) || []) draw1(t, "imp out");
+      for (const t of imports.into.get(focus) || []) draw1(t, "imp in");
+    }
+
+    function importNote(now) {
+      if (!imports.size) return "";
+      const jumps = fileJumps(now);
+      if (!jumps.length) return "";
+      const along = jumps.filter(([a, b]) => imports.linked(a.node, b.node)).length;
+      return `geçişlerin ${along}/${jumps.length}'i bir içe aktarmayı izledi`;
+    }
+
+    // core/metrics.py ile aynı tanım: okunan satırların ne kadarı aynı dosyada daha önce okunmuştu.
+    function readingNote(now) {
+      const seen = new Map();
+      let total = 0, again = 0;
+      for (const v of now) {
+        if (!v.range) continue;
+        if (!seen.has(v.node)) seen.set(v.node, new Set());
+        const lines = seen.get(v.node);
+        for (let n = v.range[0]; n <= v.range[1]; n++) { total += 1; if (lines.has(n)) again += 1; else lines.add(n); }
+      }
+      return total ? `okunan ${total.toLocaleString("tr-TR")} satır · %${Math.round((100 * again) / total)} tekrar` : "";
     }
 
     function keepVisible(y) {
@@ -389,6 +445,11 @@
       } else if (visits.length) {
         node.append(el("span", "visits hit", `🔍 #${visits[0].order}`));
       }
+      const focus = importFocus(current);
+      if (focus && row.node !== focus) {
+        if (imports.out.get(focus)?.has(row.node)) node.append(el("span", "imp-badge", "→ içe aktarılıyor"));
+        else if (imports.into.get(focus)?.has(row.node)) node.append(el("span", "imp-badge in", "← içe aktarıyor"));
+      }
       const ranges = own.filter((v) => v.range);
       const ticks = own.filter((v) => v.tick);
       if (ranges.length || ticks.length) {
@@ -433,6 +494,17 @@
         const line = [focus.kind ? VERB[focus.kind] || focus.kind : "", focus.summary, focus.outcome].filter(Boolean).join(" · ");
         if (line) parts.push(el("div", focus.error ? "meta err" : "meta", line));
         if (focus.hits && focus.hits.length) parts.push(el("div", "meta", `${focus.hits.length} dosyada eşleşme (kesik çizgiler)`));
+      }
+      if (focus.node && focus.node.startsWith("file:") && imports.size) {
+        const outs = imports.out.get(focus.node)?.size || 0, ins = imports.into.get(focus.node)?.size || 0;
+        parts.push(el("div", "meta", `içe aktardığı ${outs} proje dosyası · onu içe aktaran ${ins}`));
+        const jump = fileJumps(now).at(-1);
+        if (!selected && jump && jump[1].node === focus.node) {
+          const from = (jump[0].path || "").split("/").pop();
+          const followed = imports.linked(jump[0].node, jump[1].node);
+          parts.push(el("div", followed ? "meta ok" : "meta",
+            followed ? `${from} → buraya geçiş bir içe aktarma bağlantısını izledi` : `${from} → buraya geçişte içe aktarma bağlantısı yok`));
+        }
       }
       // O anda model ne düşünüyordu: eylemi isteyen adımın düşüncesi ve metni.
       const target = selected && selected.vt !== undefined ? selected : current;
@@ -501,7 +573,10 @@
     return {
       reset(path) {
         events = []; entries = []; rootName = ""; treeNote = ""; playhead = 0; playing = false; live = true;
-        selected = null; expanded = new Set();
+        selected = null; expanded = new Set(); imports = importIndex([]);
+        fetch("/api/imports?path=" + encodeURIComponent(path)).then((r) => r.json()).then((g) => {
+          imports = importIndex(g.edges); draw();
+        }).catch(() => {});
         fetch("/api/tree?path=" + encodeURIComponent(path)).then((r) => r.json()).then((t) => {
           entries = t.entries || []; rootName = t.name || "";
           treeNote = t.entries && t.entries.length
@@ -522,5 +597,28 @@
     };
   }
 
-  window.HarnessMap = { create, compile };
+  // Sunucunun verdiği kenarlardan iki yönlü komşuluk; anahtarlar haritadaki düğüm adları.
+  function importIndex(edges) {
+    const out = new Map(), into = new Map();
+    for (const [a, b] of edges || []) {
+      const from = `file:${a.toLowerCase()}`, to = `file:${b.toLowerCase()}`;
+      if (!out.has(from)) out.set(from, new Set());
+      if (!into.has(to)) into.set(to, new Set());
+      out.get(from).add(to); into.get(to).add(from);
+    }
+    const linked = (x, y) => (out.get(x)?.has(y) || out.get(y)?.has(x)) ?? false;
+    return { out, into, linked, size: (edges || []).length };
+  }
+
+  // Dosyadan dosyaya geçişler: ardışık iki dosya ziyareti (arama ve komutlar araya girmez).
+  function fileJumps(visits) {
+    const files = visits.filter((v) => v.node && v.node.startsWith("file:"));
+    const jumps = [];
+    for (let i = 1; i < files.length; i++) {
+      if (files[i].node !== files[i - 1].node) jumps.push([files[i - 1], files[i]]);
+    }
+    return jumps;
+  }
+
+  window.HarnessMap = { create, compile, importIndex, fileJumps };
 })();

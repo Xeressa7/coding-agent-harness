@@ -21,6 +21,7 @@ from harness.core.events import (
     ToolFinished,
     ToolStarted,
 )
+from harness.core.metrics import ReadStats, read_stats
 from harness.core.session_log import read_session
 from harness.messages import AssistantMessage, Message, ToolResult
 
@@ -55,6 +56,14 @@ def intervention_summary(event: HarnessIntervened) -> str:
     return f"{layer}: {event.summary} · {_ACTIONS.get(event.action, event.action)}"
 
 
+def reread_text(reading: ReadStats) -> str:
+    """ "%48 (590 / 1.230)": okunan satırların ne kadarı daha önce okunmuştu."""
+    if reading.reread_ratio is None:
+        return "—"
+    counts = f"{reading.reread_lines:,} / {reading.lines_read:,}".replace(",", ".")
+    return f"%{reading.reread_ratio * 100:.0f} ({counts})"
+
+
 def summary_items(events: Sequence[Event]) -> list[tuple[str, str]]:
     """Aynı ölçüm tanımları terminal ve HTML'de kullanılır; kısmi toplam uydurulmaz."""
     replies = [e for e in events if isinstance(e, ModelReplied)]
@@ -86,6 +95,7 @@ def summary_items(events: Sequence[Event]) -> list[tuple[str, str]]:
         else None
     )
     interventions = sum(isinstance(e, HarnessIntervened) for e in events)
+    reading = read_stats(events)
     return [
         ("Durum", _STATUS[finish.reason] if finish else "Yarım kaldı"),
         ("Tur süresi", seconds(finish.duration_seconds if finish else None)),
@@ -96,6 +106,7 @@ def summary_items(events: Sequence[Event]) -> list[tuple[str, str]]:
         ("Çıktı tokenı", str(output_total) if output_total is not None else "—"),
         ("Önbellekten girdi", f"%{cache_share * 100:.0f}" if cache_share is not None else "—"),
         ("Harness müdahalesi", str(interventions)),
+        ("Tekrar okunan satır", reread_text(reading)),
         (
             "Ortalama token/sn",
             f"{output_total / model_seconds:.2f}"

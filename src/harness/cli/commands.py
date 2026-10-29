@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from harness.cli.inspector import reread_text
 from harness.cli.themes import THEME_FILE, available, palette_for
 from harness.cli.watch import WatchServer
 from harness.core.agent import Agent
@@ -32,6 +33,7 @@ from harness.core.events import (
     TaskStarted,
     ToolFinished,
 )
+from harness.core.metrics import read_stats
 from harness.core.permissions import Decision, PermissionManager
 from harness.core.session_log import (
     SessionLogger,
@@ -809,6 +811,9 @@ def usage_text(events: list[Event]) -> str:
             + (f" · {errors} hata" if errors else ""),
         ),
     ]
+    reading = read_stats(events)
+    if reading.lines_read:
+        rows.append(("Tekrar okunan satır", reread_text(reading)))
     if interventions:
         listed = ", ".join(f"{n} ×{c}" for n, c in interventions.most_common())
         rows.append(("Harness müdahalesi", f"{interventions.total()} ({listed})"))

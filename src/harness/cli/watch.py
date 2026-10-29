@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlparse
 
+from harness.cli.code_map import import_graph
 from harness.tools.search import SKIPPED_DIRS
 
 _POLL_SECONDS = 0.25
@@ -28,22 +29,35 @@ _TREE_LIMIT = 3000
 _STATIC = {"/map.js": ("watch_map.js", "text/javascript; charset=utf-8")}
 
 
+def log_root(log: Path) -> str | None:
+    """Kaydın çalıştığı klasör (ilk TaskStarted.root); eski kayıtta yoktur."""
+    try:
+        with log.open(encoding="utf-8") as f:
+            for line in f:
+                event = json.loads(line)
+                if event.get("kind") == "task_started" and event.get("root"):
+                    return str(event["root"])
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def project_imports(log: Path) -> dict[str, Any]:
+    """Kaydın klasöründeki içe aktarma bağlantıları (bugünkü hâli); klasör yoksa boş."""
+    root = log_root(log)
+    if root is None or not Path(root).is_dir():
+        return {"edges": [], "files": 0, "complete": False}
+    graph = import_graph(Path(root))
+    return {"edges": graph.edges, "files": graph.files, "complete": graph.complete}
+
+
 def project_tree(log: Path, limit: int = _TREE_LIMIT) -> dict[str, Any]:
     """Kaydın çalıştığı klasörün bugünkü ağacı (yalnız adlar; içerik okunmaz).
 
     Harita ajanın dokunmadığı dosyaları da soluk gösterir. Klasör artık yoksa (ör.
     deneyin geçici kopyası) ağaç boş döner; harita kayıttaki yollarla yetinir.
     """
-    root: str | None = None
-    try:
-        with log.open(encoding="utf-8") as f:
-            for line in f:
-                event = json.loads(line)
-                if event.get("kind") == "task_started" and event.get("root"):
-                    root = str(event["root"])
-                    break
-    except (OSError, ValueError):
-        pass
+    root = log_root(log)
     if root is None or not Path(root).is_dir():
         return {
             "root": root,
@@ -150,6 +164,13 @@ def _handler(folder: Path) -> type[BaseHTTPRequestHandler]:
                         self._send(404, "text/plain; charset=utf-8", "kayıt yok".encode())
                         return
                     body = json.dumps(project_tree(log), ensure_ascii=False).encode()
+                    self._send(200, "application/json; charset=utf-8", body)
+                case "/api/imports":
+                    log = _inside(folder, (query.get("path") or [""])[0])
+                    if log is None:
+                        self._send(404, "text/plain; charset=utf-8", "kayıt yok".encode())
+                        return
+                    body = json.dumps(project_imports(log), ensure_ascii=False).encode()
                     self._send(200, "application/json; charset=utf-8", body)
                 case path if path in _STATIC:
                     name, content_type = _STATIC[path]

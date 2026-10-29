@@ -27,7 +27,14 @@ from pathlib import Path
 
 from harness.core.agent import Agent
 from harness.core.anatomy import Anatomy
-from harness.core.events import HarnessIntervened, ModelReplied, TaskFinished, ToolFinished
+from harness.core.events import (
+    Event,
+    HarnessIntervened,
+    ModelReplied,
+    TaskFinished,
+    ToolFinished,
+)
+from harness.core.metrics import read_stats
 from harness.core.permissions import PermissionManager
 from harness.core.session_log import SessionLogger
 from harness.llm.base import LLMClient
@@ -54,6 +61,8 @@ class TaskResult:
     tool_calls: int = 0
     tool_errors: int = 0
     interventions: int = 0  # harness katmanlarının araya girişi (HarnessIntervened)
+    lines_read: int = 0  # read_file'ın gösterdiği satırlar (core/metrics.py)
+    reread_lines: int = 0  # bunlardan daha önce okunmuş olanlar
     variant: str = ""
     repeat: int = 1
     log: str | None = None  # bu koşunun oturum kaydı (.jsonl)
@@ -121,8 +130,10 @@ async def run_task(
         has_usage = has_cache = False
         tool_calls = tool_errors = interventions = 0
         error = ""
+        seen: list[Event] = []
         try:
             async for event in agent.run(task_text):
+                seen.append(event)
                 if log is not None:
                     log.write(event)
                 if isinstance(event, ModelReplied) and event.usage is not None:
@@ -146,6 +157,7 @@ async def run_task(
             pass  # TaskFinished(reason="error") zaten geldi; değerlendirme yine yapılır
 
         passed, detail = _grade(work, task_dir / "tests")
+        reading = read_stats(seen)
         return TaskResult(
             task_id=task_id,
             passed=passed,
@@ -159,6 +171,8 @@ async def run_task(
             tool_calls=tool_calls,
             tool_errors=tool_errors,
             interventions=interventions,
+            lines_read=reading.lines_read,
+            reread_lines=reading.reread_lines,
             log=str(log.path) if log is not None else None,
         )
 
@@ -257,6 +271,7 @@ class VariantSummary:
     tool_calls: int
     tool_errors: int
     interventions: int
+    reread_ratio: float | None  # okunan satırların tekrar okunan payı
 
     @property
     def pass_rate(self) -> float:
@@ -306,6 +321,11 @@ def summarize(results: Sequence[TaskResult]) -> list[VariantSummary]:
                 tool_calls=sum(r.tool_calls for r in runs),
                 tool_errors=sum(r.tool_errors for r in runs),
                 interventions=sum(r.interventions for r in runs),
+                reread_ratio=(
+                    sum(r.reread_lines for r in runs) / read
+                    if (read := sum(r.lines_read for r in runs))
+                    else None
+                ),
             )
         )
     return summaries

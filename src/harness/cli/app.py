@@ -1026,20 +1026,34 @@ def eval_command(
 def watch_command(
     folder: Annotated[
         Path | None,
-        typer.Argument(help="İzlenecek kayıt klasörü (verilmezse bu projenin oturumları)"),
+        typer.Argument(
+            help="Kayıt klasörü ya da tek kayıt (.jsonl: haritada tekrar oynatılır); "
+            "verilmezse bu projenin oturumları"
+        ),
     ] = None,
     evals: Annotated[bool, typer.Option("--evals", help="Deney kayıtlarını izle")] = False,
     port: Annotated[int, typer.Option(help="Yerel port (0: boş bir port seçilir)")] = 0,
     open_browser: Annotated[bool, typer.Option("--open/--no-open", help="Tarayıcıda aç")] = True,
 ) -> None:
-    """Canlı panel: kayıtları tarayıcıda akarken gösterir; en yeni kayda kendiliğinden geçer."""
-    target = folder or (EVALS_HOME if evals else sessions_dir(find_project_root(Path.cwd())))
+    """Canlı panel: kayıtları tarayıcıda akarken gösterir; en yeni kayda kendiliğinden geçer.
+
+    Tek bir kayıt verilirse o kayıt haritada açılır: video gibi geri sarılır.
+    """
+    log = folder if folder is not None and folder.is_file() else None
+    if log is not None and log.suffix != ".jsonl":
+        raise typer.BadParameter(f"{log} bir oturum kaydı (.jsonl) değil.", param_hint="kayıt")
+    target = (
+        log.parent
+        if log is not None
+        else folder or (EVALS_HOME if evals else sessions_dir(find_project_root(Path.cwd())))
+    )
     panel = WatchServer(target)
     try:
-        url = panel.start(port)
+        panel.start(port)
     except OSError as exc:
         console.print(Text(f"Canlı panel açılamadı: {exc}", style="h.error"))
         raise typer.Exit(1) from exc
+    url = panel.url_for(log) + "&view=map" if log is not None else panel.url_for(None)
     console.print(f"Canlı panel: {url} · izlenen: {target} · kapatmak için Ctrl+C")
     if open_browser:
         open_in_browser(url)

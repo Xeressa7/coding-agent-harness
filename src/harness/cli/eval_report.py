@@ -49,6 +49,7 @@ def summary_table(summaries: Sequence[VariantSummary]) -> Table:
     table.add_column("Önbellek", justify="right")
     table.add_column("Araç hatası", justify="right")
     table.add_column("Müdahale", justify="right")
+    table.add_column("Tekrar okuma", justify="right")
     for s in summaries:
         table.add_row(
             s.variant,
@@ -62,10 +63,12 @@ def summary_table(summaries: Sequence[VariantSummary]) -> Table:
             percent(s.cache_ratio),
             f"{s.tool_errors}/{s.tool_calls}",
             str(s.interventions),
+            percent(s.reread_ratio),
         )
     table.caption = (
         "Adım, süre ve token koşu başına ortalamadır. Önbellek: girdinin önbellekten okunan payı. "
         "Müdahale: harness katmanlarının araya girişi. "
+        "Tekrar okuma: okunan satırların daha önce okunmuş payı. "
         "Aralıklar örtüşüyorsa fark kanıtlanmış sayılmaz."
     )
     return table

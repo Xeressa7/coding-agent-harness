@@ -60,6 +60,10 @@ yazdıkça süzülen bir pencere (↑/↓, Enter, Esc), sade akışta numaralı 
   gösterir (koyu yer: tekrar okunmuş). Zaman çubuğuyla video gibi geri sarılır
   (boşluk: oynat, ←/→: önceki/sonraki eylem); konum adrese yazılır (`&t=8`),
   o an link olarak paylaşılabilir. Sağda o adımda modelin ne düşündüğü durur.
+  "İçe aktarmalar" açıkken odaktaki dosyanın proje içi importları yeşil yaylarla
+  görünür; üst şerit geçişlerin kaçının bir import bağlantısını izlediğini ve okunan
+  satırların tekrar payını sayar. Biten bir kayıt doğrudan haritada açılır:
+  `harness watch <kayıt>.jsonl`.
 - `/theme`: renk teması (koyu, açık, yüksek-kontrast, renk-körü; `~/.harness/theme.toml`
   ile kişisel). Tam ekranda Ctrl+T sıradakine geçer. `NO_COLOR` sade akışı renksiz yapar.
 - `/status` · `/tools` · `/usage` (`/cost`) · `/new` (`/clear`) · `/inspect` · `/exit` (`/quit`).
@@ -123,7 +127,8 @@ buradan sayar.
 (model × anatomi) `-n` kez koşulur, gizli testlerle puanlanır. Tekrarlar iç içe
 koşar (önce her şeyin 1. tekrarı), yarıda kesilen deney de dengeli kalır. Özet:
 geçme oranı ve %95 Wilson aralığı, "bitti" diyen koşu sayısı (geçmekten ayrı),
-ortalama adım, süre, token, önbellek payı, araç hatası ve müdahale. Her koşunun
+ortalama adım, süre, token, önbellek payı, araç hatası, müdahale ve tekrar okuma
+(okunan satırların aynı dosyada daha önce okunmuş payı). Her koşunun
 kaydı `~/.harness/evals/<deney>/runs/` altındadır; `--watch` deneyi canlı izletir.
 
 Okuma, arama ve plan araçları sormadan çalışır; yazma, komut ve ağ araçları izin
