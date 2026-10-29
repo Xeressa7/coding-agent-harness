@@ -86,7 +86,7 @@ from harness.core.events import (
     ToolStarted,
 )
 from harness.core.session_log import SessionLogger, list_sessions, read_session
-from harness.llm.base import LLMError, ModelInfo
+from harness.llm.base import LLMClient, LLMError, ModelInfo
 from harness.llm.chatgpt_auth import DEFAULT_PATH as CHATGPT_CREDENTIALS
 from harness.llm.chatgpt_auth import AuthError, login
 from harness.llm.providers import (
@@ -1063,6 +1063,69 @@ def watch_command(
         pass
     finally:
         panel.close()
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option(help="Dinlenecek adres")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Dinlenecek port")] = 8765,
+    demo: Annotated[
+        bool, typer.Option("--demo", help="Sahte modelle, giriş gerektirmeden dener")
+    ] = False,
+    model: ModelOption = None,
+    effort: EffortOption = None,
+    anatomy_name: AnatomyOption = None,
+    ollama: Annotated[
+        bool, typer.Option("--ollama", hidden=True, help="Eski ad: -m ollama/<model> ile aynı")
+    ] = False,
+) -> None:
+    """Tarayıcıda sohbet: tek sayfa + WebSocket, aynı çekirdek döngüsü üzerinden.
+
+    Sağlayıcı ve model sohbetteki gibi seçilir (-m sağlayıcı/model, verilmezse kayıtlı
+    seçim). Her bağlantı bu projenin oturum kaydına yazılır: canlı panel ve harita
+    tarayıcı sohbetlerini de gösterir.
+    """
+    if ollama and not (model or "").startswith("ollama/"):
+        model = f"ollama/{model or 'llama3.2'}"
+    config = resolve_config(model, effort, anatomy_name)
+    if not demo:
+        ready, why = readiness(config.provider)
+        if not ready:
+            console.print(Text(f"{config.provider.name} hazır değil: {why}", style="h.error"))
+            raise typer.Exit(1)
+    root = start_session("web · sahte model" if demo else f"web · {config.label}")
+    prompt = load_system_prompt(config.anatomy)
+
+    async def run() -> None:
+        import uvicorn
+
+        from harness.cli.web import create_app
+
+        async with httpx.AsyncClient(timeout=120) as http:
+
+            def llm_factory() -> LLMClient:
+                if demo:
+                    return ScriptedLLM(DEMO_SCRIPT)
+                return make_llm(config.provider, config.model, config.effort, http)
+
+            web_app = create_app(
+                config.anatomy,
+                root,
+                prompt,
+                llm_factory,
+                log_dir=sessions_dir(root),
+                provider=DEMO_PROVIDER.name if demo else config.provider.name,
+                model=None if demo else config.model,
+                effort=None if demo else config.effort,
+            )
+            console.print(Text.assemble(("Tarayıcıda aç: ", "h.ok"), f"http://{host}:{port}"))
+            uvicorn_config = uvicorn.Config(web_app, host=host, port=port, log_level="warning")
+            await uvicorn.Server(uvicorn_config).serve()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        console.print("Durduruldu.")
 
 
 @app.command(name="inspect")

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "harness-web-demo",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "harness", "serve", "--demo"],
+      "port": 8765
+    }
+  ]
+}
