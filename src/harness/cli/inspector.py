@@ -10,6 +10,8 @@ from harness.core.events import (
     CodeBlocksSaved,
     ContextAssembled,
     Event,
+    HarnessIntervened,
+    ModelReasoningDelta,
     ModelReplied,
     ModelStarted,
     ModelTextDelta,
@@ -43,6 +45,16 @@ def code_blocks_summary(event: CodeBlocksSaved) -> str:
     return " · ".join(parts)
 
 
+LAYER_NAMES = {"loop_guard": "Takılma uyarısı"}
+_ACTIONS = {"warn": "modele hatırlatıldı", "block": "çağrı çalıştırılmadı"}
+
+
+def intervention_summary(event: HarnessIntervened) -> str:
+    """Harness katmanının araya girişi; bütün ön yüzler bunu yazar."""
+    layer = LAYER_NAMES.get(event.layer, event.layer)
+    return f"{layer}: {event.summary} · {_ACTIONS.get(event.action, event.action)}"
+
+
 def summary_items(events: Sequence[Event]) -> list[tuple[str, str]]:
     """Aynı ölçüm tanımları terminal ve HTML'de kullanılır; kısmi toplam uydurulmaz."""
     replies = [e for e in events if isinstance(e, ModelReplied)]
@@ -67,6 +79,13 @@ def summary_items(events: Sequence[Event]) -> list[tuple[str, str]]:
         if complete and outputs and all(n is not None for n in outputs)
         else None
     )
+    cached = [e.usage.cached_tokens if e.usage else None for e in replies]
+    cache_share = (
+        sum(n for n in cached if n is not None) / input_total
+        if input_total and cached and all(n is not None for n in cached)
+        else None
+    )
+    interventions = sum(isinstance(e, HarnessIntervened) for e in events)
     return [
         ("Durum", _STATUS[finish.reason] if finish else "Yarım kaldı"),
         ("Tur süresi", seconds(finish.duration_seconds if finish else None)),
@@ -75,6 +94,8 @@ def summary_items(events: Sequence[Event]) -> list[tuple[str, str]]:
         ("Araç sonucu / hata", f"{len(tools)} / {sum(e.result.is_error for e in tools)}"),
         ("Girdi tokenı", str(input_total) if input_total is not None else "—"),
         ("Çıktı tokenı", str(output_total) if output_total is not None else "—"),
+        ("Önbellekten girdi", f"%{cache_share * 100:.0f}" if cache_share is not None else "—"),
+        ("Harness müdahalesi", str(interventions)),
         (
             "Ortalama token/sn",
             f"{output_total / model_seconds:.2f}"
@@ -121,6 +142,9 @@ def _event_html(event: Event) -> str:
         case ModelTextDelta(step=step, text=text):
             title = f"Kısmi model metni · adım {step} (tamamlanmadı)"
             detail = _pre(text)
+        case ModelReasoningDelta(step=step, text=text):
+            title = f"Kısmi düşünce · adım {step} (tamamlanmadı)"
+            detail = _pre(text)
         case ModelReplied(step=step):
             title = f"Model yanıtı · adım {step} · {seconds(event.duration_seconds)}"
             detail = _pre(event.text) if event.text else "<p>Metin yok; araç isteği olabilir.</p>"
@@ -160,6 +184,8 @@ def _event_html(event: Event) -> str:
         case CodeBlocksSaved(step=step):
             title = f"Harness cevaptaki kod bloklarını yazdı · adım {step}"
             detail = f"<p>{escape(code_blocks_summary(event))}</p>"
+        case HarnessIntervened(step=step):
+            title = f"Harness araya girdi · adım {step} · {intervention_summary(event)}"
         case TaskFinished():
             title = f"{_STATUS[event.reason]} · {event.steps} adım"
             detail = _pre(event.error) if event.error else ""
@@ -188,7 +214,10 @@ def render_report(events: Sequence[Event], source: str) -> str:
         )
         completed_steps = {e.step for e in turn if isinstance(e, ModelReplied)}
         visible = [
-            e for e in turn if not isinstance(e, ModelTextDelta) or e.step not in completed_steps
+            e
+            for e in turn
+            if not isinstance(e, ModelTextDelta | ModelReasoningDelta)
+            or e.step not in completed_steps
         ]
         sections.append(
             f"<section class='turn' aria-labelledby='turn-{number}'>"

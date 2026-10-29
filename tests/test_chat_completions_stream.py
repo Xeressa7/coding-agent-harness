@@ -14,7 +14,7 @@ from harness.llm.chat_completions import (
     list_chat_models,
     parse_response,
 )
-from harness.messages import AssistantMessage, TextDelta, ToolCall, UserMessage
+from harness.messages import AssistantMessage, ReasoningDelta, TextDelta, ToolCall, UserMessage
 
 pytestmark = pytest.mark.anyio
 
@@ -65,7 +65,12 @@ async def test_stream_joins_text_tool_call_pieces_reasoning_and_usage() -> None:
         assert isinstance(llm, StreamingLLMClient)
         parts = [p async for p in llm.stream([UserMessage(text="oku")])]
 
-    assert parts[:-1] == [TextDelta(text="Bakı"), TextDelta(text="yorum.")]
+    assert parts[:-1] == [
+        ReasoningDelta(text="Dosyayı "),
+        ReasoningDelta(text="okumalıyım."),
+        TextDelta(text="Bakı"),
+        TextDelta(text="yorum."),
+    ]
     reply = parts[-1]
     assert isinstance(reply, AssistantMessage)
     assert reply.text == "Bakıyorum."

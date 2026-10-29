@@ -1,7 +1,7 @@
 """Yapılandırma: model, adım limiti, token bütçesi, çalışma dizini (rapor Bölüm 6).
 
-Değerler komut satırından ya da yapılandırma dosyasından gelir. API anahtarı
-yalnız ortam değişkeninden okunur.
+Değerler komut satırından ya da yapılandırma dosyasından gelir. API anahtarları
+ayrı dosyadadır (llm/credentials.py); bu dosyada sır yoktur.
 """
 
 import re
@@ -16,14 +16,13 @@ DEFAULT_SESSIONS_HOME = HARNESS_HOME / "sessions"
 
 
 class Settings(BaseModel):
-    """Kullanıcının kalıcı seçimleri; `harness provider/model/effort` ile ayrı ayrı değişir."""
+    """Kullanıcının kalıcı seçimleri; sohbette /model, /effort, /anatomy, /theme ile değişir."""
 
     provider: str = "chatgpt"
     model: str = "gpt-6-luna"
     effort: str | None = None  # None: modelin kendi varsayılanı
     anatomy: str | None = None  # None: varsayılan anatomi
-    # Sağlayıcıya dönüldüğünde son kullanılan modeli hatırlar: {"anthropic": "claude-opus-5-5"}.
-    models: dict[str, str] = {}
+    theme: str | None = None  # None: varsayılan renk teması (cli/themes.py)
 
 
 def load_settings(path: Path = DEFAULT_SETTINGS_PATH) -> Settings:

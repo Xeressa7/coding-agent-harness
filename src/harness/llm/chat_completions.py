@@ -15,16 +15,17 @@ araçlı turda onu geri ister, bu yüzden aynı uç noktaya geri gönderilir.
 """
 
 import json
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from time import perf_counter
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import httpx
 
-from harness.llm.base import Effort, LLMError, ModelInfo
+from harness.llm.base import Effort, LLMError, ModelInfo, error_message
 from harness.messages import (
     AssistantMessage,
     Message,
+    ReasoningDelta,
     SystemMessage,
     TextDelta,
     TokenUsage,
@@ -53,8 +54,11 @@ class ChatCompletionsLLM:
         api_key: str | None = None,
         effort: str | None = None,
         effort_style: EffortStyle = "reasoning_effort",
+        *,
+        headers: Mapping[str, str] | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._extra_headers = dict(headers or {})
         self._model = model
         self._http = http
         self._api_key = api_key
@@ -62,7 +66,8 @@ class ChatCompletionsLLM:
         self._effort_style: EffortStyle = effort_style
 
     def _headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+        auth = {"Authorization": f"Bearer {self._api_key}"} if self._api_key else {}
+        return {**self._extra_headers, **auth}
 
     def _body(self, history: Sequence[Message], tools: Sequence[ToolSpec]) -> dict[str, Any]:
         return build_request(
@@ -103,7 +108,7 @@ class StreamingChatCompletionsLLM(ChatCompletionsLLM):
 
     async def stream(
         self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
-    ) -> AsyncGenerator[TextDelta | AssistantMessage, None]:
+    ) -> AsyncGenerator[TextDelta | ReasoningDelta | AssistantMessage, None]:
         started = perf_counter()
         first_text_seconds: float | None = None
         body = self._body(history, tools)
@@ -133,6 +138,7 @@ class StreamingChatCompletionsLLM(ChatCompletionsLLM):
                         delta: dict[str, Any] = choice.get("delta") or {}
                         if piece := _reasoning_of(delta):
                             reasoning.append(piece)
+                            yield ReasoningDelta(text=piece)
                         text: str = delta.get("content") or ""
                         if text:
                             if first_text_seconds is None:
@@ -272,7 +278,9 @@ async def list_chat_models(
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     response = await http.get(f"{base_url.rstrip('/')}/models", headers=headers)
     if response.status_code != 200:
-        raise ChatCompletionsError(f"HTTP {response.status_code}: {response.text[:500]}")
+        raise ChatCompletionsError(
+            f"HTTP {response.status_code}: {response.text[:500]}", status=response.status_code
+        )
     entries: list[dict[str, Any]] = response.json().get("data") or []
     models: list[ModelInfo] = []
     for entry in entries:
@@ -294,17 +302,11 @@ async def list_chat_models(
 
 def _http_error(response: httpx.Response) -> ChatCompletionsError:
     """Sağlayıcının hata mesajı varsa onu, yoksa gövdenin başını gösterir."""
-    message: object = None
     try:
         body: object = response.json()
     except ValueError:
         body = None
-    if isinstance(body, dict):
-        error = cast(dict[str, object], body).get("error")
-        message = (
-            cast(dict[str, object], error).get("message") if isinstance(error, dict) else error
-        )
-    detail = str(message) if message else response.text[:500]
+    detail = error_message(body) or response.text[:500]
     return ChatCompletionsError(f"HTTP {response.status_code}: {detail}")
 
 

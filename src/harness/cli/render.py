@@ -9,11 +9,13 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.text import Text
 
-from harness.cli.inspector import code_blocks_summary
+from harness.cli.inspector import code_blocks_summary, intervention_summary
 from harness.core.events import (
     CodeBlocksSaved,
     ContextAssembled,
     Event,
+    HarnessIntervened,
+    ModelReasoningDelta,
     ModelReplied,
     ModelStarted,
     ModelTextDelta,
@@ -36,37 +38,47 @@ def render(console: Console, event: Event) -> None:
     match event:
         case TaskStarted(task=task):
             console.rule("[bold]Yeni görev")
-            console.print(Text.assemble(("Kullanıcı: ", "bold cyan"), task))
-        case ModelReplied(step=step, text=text, tool_calls=calls):
+            console.print(Text.assemble(("Kullanıcı: ", "h.user"), task))
+        case ModelReplied(step=step, text=text, tool_calls=calls, reasoning=reasoning):
             console.print()
-            console.print(Text(f"[adım {step}] Model:", style="bold magenta"))
+            console.print(Text(f"[adım {step}] Model:", style="h.agent"))
+            if reasoning:
+                console.print(Text(f"düşünce · {reasoning}", style="h.thought"))
             if text:
                 # Gerçek modeller cevabı Markdown ile biçimlendirir (kalın, liste, kod).
                 console.print(Markdown(text))
             for call in calls:
-                console.print(Text.assemble(("  → araç isteği: ", "yellow"), _describe(call)))
+                console.print(Text.assemble(("  → araç isteği: ", "h.warn"), _describe(call)))
         case ToolFinished(call=call, result=result, summary=summary, outcome=outcome):
-            style = "red" if result.is_error else "green"
+            style = "h.error" if result.is_error else "h.ok"
             kind = "araç hatası (modele geri döndü)" if result.is_error else "araç sonucu"
             title = " · ".join(part for part in (kind, call.name, summary, outcome) if part)
             # Text(): dosya içeriğindeki [köşeli parantez] Rich biçim komutu sanılmasın.
             body = Text(_shorten(result.content))
             console.print(Panel(body, title=Text(title), border_style=style))
         case CodeBlocksSaved():
-            console.print(Text(f"[harness] {code_blocks_summary(event)}", style="cyan"))
+            console.print(Text(f"[harness] {code_blocks_summary(event)}", style="h.harness"))
+        case HarnessIntervened():
+            console.print(Text(f"[harness] {intervention_summary(event)}", style="h.harness"))
         case TaskFinished(reason="done", steps=steps):
             console.print()
-            console.rule(f"[bold green]Görev bitti · {steps} adım")
+            console.rule(f"[h.ok.strong]Görev bitti · {steps} adım")
         case TaskFinished(reason="step_limit", steps=steps):
             console.print()
-            console.rule(f"[bold yellow]Adım sınırı doldu · {steps} adım")
+            console.rule(f"[h.warn.strong]Adım sınırı doldu · {steps} adım")
         case TaskFinished(reason=reason, error=error):
             console.print(
                 Text(f"{'Durduruldu' if reason == 'cancelled' else 'Hata'}: {error or '—'}")
             )
         case PermissionRequested(call=call):
-            console.print(Text.assemble(("  ⚠ izin isteniyor: ", "yellow"), _describe(call)))
-        case ContextAssembled() | ModelStarted() | ToolStarted() | ModelTextDelta():
+            console.print(Text.assemble(("  ⚠ izin isteniyor: ", "h.warn"), _describe(call)))
+        case (
+            ContextAssembled()
+            | ModelStarted()
+            | ToolStarted()
+            | ModelTextDelta()
+            | ModelReasoningDelta()
+        ):
             # Ayrıntılı replay tamamlanmış ModelReplied'ı zaten çizer; bağlam HTML incelemededir.
             pass
 
@@ -78,7 +90,7 @@ def ask_permission(console: Console, call: ToolCall) -> PermissionChoice:
     """
     # Text.assemble: araç argümanındaki [köşeli parantez] Rich biçim komutu sanılmasın.
     prompt = Text.assemble(
-        ("İzin ver mi? ", "yellow"), _describe(call), "  (e)vet / (h)ayır / (o)turum boyu"
+        ("İzin ver mi? ", "h.warn"), _describe(call), "  (e)vet / (h)ayır / (o)turum boyu"
     )
     choice = Prompt.ask(prompt, choices=list(_CHOICES), default="h", console=console)
     return _CHOICES[choice]

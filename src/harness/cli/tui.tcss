@@ -41,6 +41,10 @@ Screen {
 .command-message { border-left: solid $text-muted; }
 .command-message .message-role { color: $text-muted; }
 .message-role { height: 1; text-style: bold; color: $primary; }
+.thought { height: auto; margin: 0 0 1 0; padding: 0; border: none; background: transparent; }
+.thought CollapsibleTitle { color: $text-muted; padding: 0 1; }
+.thought Contents { height: auto; padding: 0 1 0 3; }
+.thought-text { color: $text-muted; text-style: italic; }
 .message Markdown { height: auto; margin: 0; padding: 0; background: transparent; }
 .message MarkdownH1, .message MarkdownH2, .message MarkdownH3 { margin-top: 1; margin-bottom: 0; }
 .message MarkdownFence { margin: 1 0; padding: 0 1; }
@@ -80,3 +84,19 @@ PermissionDialog { align: center middle; }
 #permission-actions Button { min-width: 12; margin-left: 1; }
 #permission-actions #always { min-width: 22; }
 .compact #latest { height: 1; min-height: 1; border: none; }
+PickerScreen, KeyScreen { align: center middle; }
+.dialog {
+    width: 96;
+    max-width: 95%;
+    height: auto;
+    max-height: 85%;
+    padding: 1 2;
+    background: $surface;
+    border: round $primary;
+}
+.dialog-title { text-style: bold; color: $primary; margin-bottom: 1; }
+.dialog-text { color: $text-muted; margin-bottom: 1; }
+.dialog-keys { color: $text-muted; margin-top: 1; }
+#picker-search, #key-input { border: round $primary-muted; background: $background; }
+#picker-search:focus, #key-input:focus { border: round $primary; }
+#picker-options { height: auto; max-height: 22; background: $background; border: none; }

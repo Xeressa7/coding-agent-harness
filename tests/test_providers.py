@@ -12,7 +12,6 @@ from harness.llm.providers import (
     get_provider,
     list_models,
     make_llm,
-    reachable,
     readiness,
 )
 from harness.llm.responses import ResponsesLLM
@@ -64,17 +63,3 @@ async def test_unreachable_local_server_is_a_provider_error() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         with pytest.raises(ProviderError, match="erişilemedi"):
             await list_models(get_provider("ollama"), http, {})
-
-
-async def test_local_server_probe_says_running_or_down() -> None:
-    def up(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"data": []})
-
-    def down(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("reddedildi", request=request)
-
-    ollama = get_provider("ollama")
-    async with httpx.AsyncClient(transport=httpx.MockTransport(up)) as http:
-        assert await reachable(ollama, http, {})
-    async with httpx.AsyncClient(transport=httpx.MockTransport(down)) as http:
-        assert not await reachable(ollama, http, {})

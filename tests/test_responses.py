@@ -14,7 +14,9 @@ from harness.llm.base import LLMClient
 from harness.llm.responses import ResponsesError, ResponsesLLM, build_request
 from harness.messages import (
     AssistantMessage,
+    ReasoningDelta,
     SystemMessage,
+    TextDelta,
     TokenUsage,
     ToolCall,
     ToolResult,
@@ -149,6 +151,56 @@ async def test_answer_collected_from_items_when_completed_output_is_empty() -> N
         reply = await ResponsesLLM(FixedToken(), "m", http).complete([UserMessage(text="selam")])
 
     assert reply == AssistantMessage(text="Merhaba")
+
+
+async def test_reasoning_summary_streams_live_and_lands_in_the_reply() -> None:
+    def summary(item: str, index: int, text: str) -> dict[str, Any]:
+        return {
+            "type": "response.reasoning_summary_text.delta",
+            "item_id": item,
+            "summary_index": index,
+            "delta": text,
+        }
+
+    reasoning = {
+        "type": "reasoning",
+        "summary": [
+            {"type": "summary_text", "text": "Önce dosyaya bakayım."},
+            {"type": "summary_text", "text": "Sonra düzeltirim."},
+        ],
+    }
+    body = stream(
+        summary("r1", 0, "Önce dosyaya "),
+        summary("r1", 0, "bakayım."),
+        summary("r1", 1, "Sonra düzeltirim."),
+        {"type": "response.output_item.done", "item": reasoning},
+        {"type": "response.output_text.delta", "delta": "Tamam"},
+        {"type": "response.output_item.done", "item": text_item("Tamam")},
+        completed(),
+    )
+    async with fake_api(body) as http:
+        llm = ResponsesLLM(FixedToken(), "m", http)
+        parts = [part async for part in llm.stream([UserMessage(text="x")])]
+
+    # Paragraflar arasına boş satır girer; canlı akış tamamlanmış özetle aynı metni verir.
+    assert parts[:-1] == [
+        ReasoningDelta(text="Önce dosyaya "),
+        ReasoningDelta(text="bakayım."),
+        ReasoningDelta(text="\n\nSonra düzeltirim."),
+        TextDelta(text="Tamam"),
+    ]
+    reply = parts[-1]
+    assert isinstance(reply, AssistantMessage)
+    streamed = "".join(p.text for p in parts if isinstance(p, ReasoningDelta))
+    assert reply.reasoning == streamed == "Önce dosyaya bakayım.\n\nSonra düzeltirim."
+
+
+def test_every_request_asks_for_a_readable_reasoning_summary() -> None:
+    assert build_request("m", [UserMessage(text="x")])["reasoning"] == {"summary": "auto"}
+    assert build_request("m", [UserMessage(text="x")], effort="high")["reasoning"] == {
+        "summary": "auto",
+        "effort": "high",
+    }
 
 
 async def test_function_call_in_output_becomes_tool_call() -> None:

@@ -9,10 +9,16 @@ import pytest
 from typer.testing import CliRunner
 
 from harness.cli import app as cli
-from harness.cli.commands import ChatSession, is_command
+from harness.cli.commands import ChatSession, is_command, usage_text
 from harness.core.anatomy import get_preset
 from harness.core.config import project_sessions_dir
-from harness.core.events import ModelReplied, TaskFinished, TaskStarted, ToolFinished
+from harness.core.events import (
+    HarnessIntervened,
+    ModelReplied,
+    TaskFinished,
+    TaskStarted,
+    ToolFinished,
+)
 from harness.core.permissions import Decision
 from harness.core.session_log import (
     SessionLogger,
@@ -21,11 +27,12 @@ from harness.core.session_log import (
     read_session,
 )
 from harness.llm.base import Effort, ModelInfo
-from harness.llm.providers import Provider, ProviderError, get_provider
+from harness.llm.providers import Provider, get_provider
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import (
     AssistantMessage,
     Message,
+    TokenUsage,
     ToolCall,
     ToolResult,
     ToolSpec,
@@ -119,20 +126,24 @@ async def test_model_switch_keeps_history_and_next_turn_records_new_model(tmp_pa
     session, built = make_session(tmp_path)
     assert await turn(session, "ilk") == "luna/None"
 
-    listing = await session.run("/model")
-    assert "● 1" in listing.text and "Sol" in listing.text
+    listing = (await session.run("/model")).picker
+    assert listing is not None
+    current = [c.value for c in listing.choices if c.current]
+    assert current == ["chatgpt/luna"] and "chatgpt/sol" in [c.value for c in listing.choices]
 
     await session.run("/effort low")
     assert session.effort == "low"
     # Sol'da "low" yok: model değişince effort modelin varsayılanına döner.
-    reply = await session.run("/model 2")
+    reply = await session.run("/model sol")
     assert "sol" in reply.text and session.model == "sol" and session.effort is None
+    assert reply.picker is None  # adı yazılarak seçilen model effort sormaz
     assert await turn(session, "ikinci") == "sol/None"
     # Yeni model eski konuşmayı görür.
     users = [m.text for m in session.agent.history if isinstance(m, UserMessage)]
     assert users == ["ilk", "ikinci"]
 
-    assert "high" in (await session.run("/effort")).text
+    efforts = (await session.run("/effort")).picker
+    assert efforts is not None and "high" in [c.value for c in efforts.choices]
     await session.run("/effort high")
     assert session.label == "sol · effort: high · chatgpt"
     assert built[-1] == ("sol", "high")
@@ -164,7 +175,10 @@ async def test_model_list_failure_is_reported_not_raised(tmp_path: Path) -> None
         load_prompt=lambda anatomy: "talimat",
         sessions_dir=tmp_path / "logs",
     )
-    assert "ağ yok" in (await session.run("/model")).text
+    assert "ağ yok" in (await session.run("/model sol")).text
+    assert "ağ yok" in (await session.run("/effort")).text
+    picker = (await session.run("/model")).picker
+    assert picker is not None and "ağ yok" in picker.choices[0].detail
 
 
 async def test_new_starts_empty_history_in_a_new_log(tmp_path: Path) -> None:
@@ -208,9 +222,11 @@ async def test_resume_continues_an_old_session_in_its_own_log(tmp_path: Path) ->
     await turn(session, "yeni görev")
     os.utime(old_log, (1, 1))  # eski oturum gerçekten daha eski
 
-    table = (await session.run("/sessions")).text
-    assert table.index("yeni görev") < table.index("eski görev")
-    assert "(bu oturum)" in table
+    listing = (await session.run("/sessions")).picker  # takma ad: /resume
+    assert listing is not None and listing.kind == "resume"
+    details = [c.detail for c in listing.choices]
+    assert "yeni görev" in details[0] and "eski görev" in details[1]
+    assert [c.current for c in listing.choices] == [True, False]
 
     reply = await session.run("/resume 2")
     assert reply.reset and reply.transcript == (("Sen", "eski görev"), ("Ajan", "luna/None"))
@@ -284,34 +300,6 @@ def test_plain_chat_model_command_switches_model(
     assert used == ["luna", "sol"]
 
 
-async def test_provider_switch_keeps_history_and_refuses_an_unusable_provider(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    session, built = make_session(tmp_path)
-    await turn(session, "ilk")
-
-    listing = await session.run("/provider")
-    assert "chatgpt" in listing.text and "anthropic" in listing.text
-
-    reply = await session.run("/provider anthropic")
-    assert session.provider.name == "anthropic" and session.model == "claude-opus-5-5"
-    assert "geçmiş korundu" in reply.text
-    users = [m.text for m in session.agent.history if isinstance(m, UserMessage)]
-    assert users == ["ilk"]
-    # Geri dönünce o sağlayıcıda kullanılan model hatırlanır.
-    await session.run("/provider chatgpt")
-    assert session.model == "luna"
-
-    def no_key(provider: Provider, name: str, effort: str | None) -> EchoModel:
-        raise ProviderError("OPENROUTER_API_KEY tanımlı değil")
-
-    session._make_llm = no_key  # pyright: ignore[reportPrivateUsage]
-    refused = await session.run("/provider openrouter")
-    assert "kullanılamıyor" in refused.text and session.provider.name == "chatgpt"
-    assert "yok" in (await session.run("/provider uçak")).text
-    assert built  # ilk kurulum yapıldı
-
-
 async def test_anatomy_switch_changes_tools_prompt_and_resets_grants(tmp_path: Path) -> None:
     session, _ = make_session(tmp_path)
     session.permissions.grant("write_file")
@@ -330,6 +318,27 @@ async def test_anatomy_switch_changes_tools_prompt_and_resets_grants(tmp_path: P
         is Decision.ASK
     )
     assert "yok" in (await session.run("/anatomy uçuş")).text
+
+
+async def test_anatomy_picker_toggles_layers_and_keeps_them_across_presets(
+    tmp_path: Path,
+) -> None:
+    session, _ = make_session(tmp_path)
+    picker = (await session.run("/anatomy")).picker
+    assert picker is not None
+    toggle = next(c for c in picker.choices if c.label.startswith("loop_guard"))
+    assert toggle.label.endswith("kapalı") and toggle.value == "files+loop_guard"
+
+    await session.choose("anatomy", toggle.value)
+    assert session.anatomy.loop_guard and session.anatomy.name == "files+loop_guard"
+    picker = (await session.run("/anatomy")).picker
+    assert picker is not None
+    bash = next(c for c in picker.choices if c.label == "bash")
+    assert bash.value == "bash+loop_guard"  # paket değişince açık katman korunur
+    off = next(c for c in picker.choices if c.label.startswith("loop_guard"))
+    assert off.current and off.value == "files"
+
+    assert "katman yok" in (await session.run("/anatomy files+uydurma")).text
 
 
 async def test_tools_status_and_usage_describe_the_session(tmp_path: Path) -> None:
@@ -361,3 +370,17 @@ async def test_resume_latest_without_sessions_is_a_fresh_start(tmp_path: Path) -
     session, _ = make_session(tmp_path)
     reply = session.resume_latest()
     assert not reply.reset and "yeni oturum" in reply.text
+
+
+def test_usage_shows_the_cache_share_and_harness_interventions() -> None:
+    def reply(step: int, cached: int | None) -> ModelReplied:
+        usage = TokenUsage(input_tokens=1000, output_tokens=10, cached_tokens=cached)
+        return ModelReplied(step=step, text="", usage=usage)
+
+    guard = HarnessIntervened(step=2, layer="loop_guard", action="warn", summary="read_file 3. kez")
+    text = usage_text([TaskStarted(task="t"), reply(1, 0), reply(2, 750), guard])
+    assert "| önbellekten | 750 (%38) |" in text.replace("  ", "")
+    assert "| Harness müdahalesi | 1 (loop_guard ×1) |" in text
+    # Bir çağrı sayım vermediyse yüzde uydurulmaz.
+    partial = usage_text([TaskStarted(task="t"), reply(1, None), reply(2, 750)])
+    assert "en az 750 |" in partial and "%" not in partial

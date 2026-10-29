@@ -1,15 +1,16 @@
 """Sağlayıcı kaydı: hangi modele, hangi API ile, hangi anahtarla gidileceği.
 
 Her sağlayıcı bir satırdır: konuştuğu API (ChatGPT planı / Chat Completions /
-Anthropic Messages), adresi, anahtarının okunduğu ortam değişkeni, varsayılan
-modeli ve effort seviyeleri. Yeni bir OpenAI uyumlu sağlayıcı eklemek bu
-tabloya bir satır eklemektir; adaptör yazmak gerekmez.
+Anthropic Messages / OpenCode'da model başına seçilen biçim), adresi, anahtarının
+okunduğu ortam değişkeni, varsayılan modeli ve effort seviyeleri. Yeni bir OpenAI
+uyumlu sağlayıcı eklemek bu tabloya bir satır eklemektir; adaptör yazmak gerekmez.
 
-Anahtarlar yalnız ortam değişkeninden okunur, diske yazılmaz. ChatGPT planı
-anahtar değil `harness login` ile alınan belirteci kullanır.
+Anahtar sohbette `/connect` ile girilip `~/.harness/auth.json`'a kaydedilir
+(llm/credentials.py); aynı adlı ortam değişkeni tanımlıysa o kazanır. ChatGPT planı
+anahtar değil tarayıcı girişiyle (`/connect chatgpt` ya da `harness login`) alınan
+belirteci kullanır.
 """
 
-import os
 from collections.abc import Mapping
 from typing import Literal
 
@@ -27,10 +28,19 @@ from harness.llm.chat_completions import (
 )
 from harness.llm.chatgpt_auth import DEFAULT_PATH as CHATGPT_CREDENTIALS
 from harness.llm.chatgpt_auth import ChatGPTTokens
+from harness.llm.credentials import environment
+from harness.llm.opencode import (
+    GO_URL,
+    ZEN_URL,
+    Catalog,
+    OpenCodeLLM,
+    list_opencode_models,
+    load_catalog,
+)
 from harness.llm.responses import ResponsesLLM
 from harness.llm.responses import list_models as list_chatgpt_models
 
-ApiKind = Literal["chatgpt", "chat_completions", "anthropic"]
+ApiKind = Literal["chatgpt", "chat_completions", "anthropic", "opencode"]
 
 
 class ProviderError(LLMError):
@@ -71,7 +81,7 @@ PROVIDERS: dict[str, Provider] = {
     for p in (
         Provider(
             name="chatgpt",
-            label="ChatGPT planı (Responses API, giriş: harness login)",
+            label="ChatGPT planı (Responses API, tarayıcıyla giriş)",
             api="chatgpt",
             default_model="gpt-6-luna",
         ),
@@ -112,6 +122,22 @@ PROVIDERS: dict[str, Provider] = {
             efforts=("low", "high", "max"),
         ),
         Provider(
+            name="opencode",
+            label="OpenCode Zen (kullandıkça öde; GPT, Claude, Kimi, GLM...)",
+            api="opencode",
+            base_url=ZEN_URL,
+            api_key_env="OPENCODE_API_KEY",
+            default_model="claude-sonnet-5-5",
+        ),
+        Provider(
+            name="opencode-go",
+            label="OpenCode Go (aylık abonelik)",
+            api="opencode",
+            base_url=GO_URL,
+            api_key_env="OPENCODE_API_KEY",
+            default_model="glm-5.3",
+        ),
+        Provider(
             name="ollama",
             label="Ollama (yerel)",
             api="chat_completions",
@@ -144,22 +170,29 @@ def get_provider(name: str) -> Provider:
 
 def readiness(provider: Provider, env: Mapping[str, str] | None = None) -> tuple[bool, str]:
     """Sağlayıcı kullanılmaya hazır mı; değilse ne eksik (ağa çıkmadan bakılır)."""
-    env = os.environ if env is None else env
+    env = environment() if env is None else env
     match provider.api:
         case "chatgpt":
             if CHATGPT_CREDENTIALS.exists():
                 return True, "giriş yapılmış"
-            return False, "giriş yok: harness login"
+            return False, "giriş yok: /connect chatgpt"
         case "anthropic":
             if env.get("ANTHROPIC_API_KEY") or env.get("ANTHROPIC_AUTH_TOKEN"):
                 return True, "anahtar var"
-            return False, "ANTHROPIC_API_KEY yok"
-        case "chat_completions":
+            return False, "anahtar yok: /connect anthropic"
+        case "chat_completions" | "opencode":
             if provider.local:
                 return True, f"yerel: {provider.url(env)}"
             if provider.api_key(env):
-                return True, f"{provider.api_key_env} var"
-            return False, f"{provider.api_key_env} yok"
+                return True, "anahtar var"
+            return False, f"anahtar yok: /connect {provider.name} ({provider.api_key_env})"
+
+
+def missing_key(provider: Provider) -> str:
+    return (
+        f"{provider.name}: API anahtarı yok. Sohbette `/connect {provider.name}` ile gir "
+        f"(ya da {provider.api_key_env} ortam değişkenini tanımla)."
+    )
 
 
 def make_llm(
@@ -170,7 +203,7 @@ def make_llm(
     env: Mapping[str, str] | None = None,
 ) -> LLMClient:
     """Sağlayıcının adaptörünü kurar. Anahtar eksikse hemen anlaşılır bir hata verir."""
-    env = os.environ if env is None else env
+    env = environment() if env is None else env
     match provider.api:
         case "chatgpt":
             return ResponsesLLM(ChatGPTTokens(http), model, http, effort)
@@ -183,24 +216,19 @@ def make_llm(
         case "chat_completions":
             key = provider.api_key(env)
             if provider.api_key_env and not key and not provider.local:
-                raise ProviderError(
-                    f"{provider.name}: {provider.api_key_env} ortam değişkeni tanımlı değil."
-                )
+                raise ProviderError(missing_key(provider))
             return StreamingChatCompletionsLLM(
                 provider.url(env), model, http, key, effort, provider.effort_style
             )
+        case "opencode":
+            key = provider.api_key(env)
+            if not key:
+                raise ProviderError(missing_key(provider))
 
+            async def catalog() -> Catalog:
+                return await load_catalog(provider.name, http)
 
-async def reachable(
-    provider: Provider, http: httpx.AsyncClient, env: Mapping[str, str] | None = None
-) -> bool:
-    """Yerel sunucu ayakta mı? (`status` için kısa yoklama; model listesi uç noktası.)"""
-    env = os.environ if env is None else env
-    try:
-        response = await http.get(f"{provider.url(env)}/models", timeout=0.8)
-    except httpx.HTTPError:
-        return False
-    return response.status_code < 500
+            return OpenCodeLLM(provider.url(env), model, key, http, effort, catalog=catalog)
 
 
 async def list_models(
@@ -209,7 +237,7 @@ async def list_models(
     env: Mapping[str, str] | None = None,
 ) -> list[ModelInfo]:
     """Sağlayıcının o an sunduğu modeller (ağ isteği)."""
-    env = os.environ if env is None else env
+    env = environment() if env is None else env
     match provider.api:
         case "chatgpt":
             return await list_chatgpt_models(ChatGPTTokens(http), http)
@@ -227,3 +255,8 @@ async def list_models(
                 raise ProviderError(
                     f"{provider.name}: {provider.url(env)} erişilemedi ({e})."
                 ) from e
+        case "opencode":
+            catalog = await load_catalog(provider.name, http)
+            return await list_opencode_models(
+                provider.url(env), http, provider.api_key(env), catalog
+            )

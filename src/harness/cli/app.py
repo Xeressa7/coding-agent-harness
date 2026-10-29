@@ -5,20 +5,23 @@ Alışılmış kodlama ajanı CLI'larının biçimi:
     harness                  etkileşimli sohbet (terminalde tam ekran, boruda sade)
     harness -p "soru"        tek seferlik görev; yalnız cevap yazılır (betiklerde kullanılır)
     harness -c               bu projenin son oturumuna devam
-    harness provider|model|effort|anatomy [ad]   kalıcı seçimler, her biri ayrı
-    harness status|providers|models|sessions     bilgi
-    harness login|logout     ChatGPT planı girişi
-    harness inspect|replay|demo                  inceleme ve eğitim
+    harness -m sağlayıcı/model   bu koşu için başka model (ör. opencode-go/glm-5.3)
+    harness models [sağlayıcı]   modeller ve effort seviyeleri
+    harness sessions | login | logout | inspect | replay | demo
 
-`ask` ve `chat` eski adlarıyla da çalışır.
+Sağlayıcı bağlama, model/effort/anatomi seçimi sohbetin içindedir (`/connect`,
+`/model`, `/effort`, `/anatomy`) ve kalıcıdır. `ask` ve `chat` eski adlarıyla da çalışır.
 """
 
 import asyncio
-import os
 import re
+import secrets
 import sys
+import threading
 from collections.abc import Callable, Coroutine
+from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Any
@@ -27,31 +30,51 @@ import httpx
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.prompt import IntPrompt
 from rich.table import Table
 from rich.text import Text
+from rich.theme import ThemeStackError
 
 from harness.cli.commands import (
     DEFAULT_EFFORT_WORDS,
     ChatSession,
+    Choice,
     CommandReply,
+    Picker,
     is_command,
 )
-from harness.cli.inspector import code_blocks_summary, summary_items, write_report
+from harness.cli.eval_report import result_line, summary_table, task_table
+from harness.cli.inspector import (
+    code_blocks_summary,
+    intervention_summary,
+    summary_items,
+    write_report,
+)
 from harness.cli.render import ask_permission, live_outcome, render
+from harness.cli.themes import palette_for, rich_theme
+from harness.cli.watch import WatchServer
 from harness.core.agent import Agent
 from harness.core.anatomy import DEFAULT_PRESET, PRESETS, Anatomy, get_preset
 from harness.core.config import (
     DEFAULT_SESSIONS_HOME,
-    Settings,
+    HARNESS_HOME,
     find_project_root,
     load_settings,
     project_sessions_dir,
     save_settings,
 )
+from harness.core.evaluation import (
+    TaskResult,
+    Variant,
+    find_tasks,
+    read_results,
+    run_matrix,
+    summarize,
+)
 from harness.core.events import (
     CodeBlocksSaved,
     Event,
+    HarnessIntervened,
+    ModelReasoningDelta,
     ModelReplied,
     ModelStarted,
     ModelTextDelta,
@@ -72,22 +95,32 @@ from harness.llm.providers import (
     get_provider,
     list_models,
     make_llm,
-    reachable,
     readiness,
 )
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage, ToolCall
+from harness.tools.base import short
 
 app = typer.Typer(
     help="Şeffaf kodlama ajanı harness'i: içi görünen, katmanları açılıp kapanan ajan.",
     no_args_is_help=False,
 )
-console = Console()
-errors = Console(stderr=True)
+console = Console(theme=rich_theme(palette_for(None)))
+errors = Console(stderr=True, theme=rich_theme(palette_for(None)))
+
+
+def use_theme(name: str | None) -> None:
+    """Sade akışın renkleri; NO_COLOR tanımlıysa Rich zaten renksiz yazar."""
+    for out in (console, errors):
+        with suppress(ThemeStackError):
+            out.pop_theme()  # önceki seçim; temel tema yerinde kalır
+        out.push_theme(rich_theme(palette_for(name)))
+
 
 _PROMPT_DIR = Path(__file__).parent.parent / "prompts"
 _PROMPT_FILES = {"agent": "system.md", "raw": "raw.md"}
 SESSIONS_HOME = DEFAULT_SESSIONS_HOME
+EVALS_HOME = HARNESS_HOME / "evals"
 # Ağ, giriş ya da sağlayıcı hatası: kullanıcıya gösterilir, yığın dökümü basılmaz.
 FAILURES = (AuthError, LLMError, httpx.HTTPError)
 
@@ -125,14 +158,15 @@ DEMO_SCRIPT = [
 
 # ---------------------------------------------------------------- ortak seçenekler
 
-ProviderOption = Annotated[
+ModelOption = Annotated[
     str | None,
-    typer.Option("--provider", help=f"Sağlayıcı: {', '.join(PROVIDERS)} (kayıtlıyı ezer)"),
+    typer.Option(
+        "--model",
+        "-m",
+        help="Bu koşunun modeli: sağlayıcı/model (ör. opencode-go/glm-5.3) ya da yalnız model",
+    ),
 ]
-ModelOption = Annotated[str | None, typer.Option("--model", "-m", help="Model (kayıtlıyı ezer)")]
-EffortOption = Annotated[
-    str | None, typer.Option("--effort", help="Düşünme seviyesi (kayıtlıyı ezer)")
-]
+EffortOption = Annotated[str | None, typer.Option("--effort", help="Bu koşunun düşünme seviyesi")]
 AnatomyOption = Annotated[
     str | None, typer.Option("--anatomy", help=f"Açık katmanlar: {', '.join(PRESETS)}")
 ]
@@ -154,7 +188,6 @@ class RunConfig:
     model: str
     effort: str | None
     anatomy: Anatomy
-    remembered: dict[str, str]
 
     @property
     def label(self) -> str:
@@ -162,36 +195,38 @@ class RunConfig:
 
 
 def resolve_config(
-    provider: str | None,
     model: str | None,
     effort: str | None,
     anatomy: str | None,
 ) -> RunConfig:
-    """Bayrak verilmeyen her seçim kayıttan gelir; sağlayıcı değişince model de ona uyar."""
+    """Bayrak verilmeyen her seçim kayıttan gelir; bayraklar yalnız bu koşu içindir.
+
+    `-m` sağlayıcı adıyla başlıyorsa (`opencode-go/glm-5.3`) sağlayıcı da değişir;
+    OpenRouter'ın kendi `/`'lu adları için tam yol yazılır: `openrouter/openai/gpt-oss-120b`.
+    """
     settings = load_settings()
-    try:
-        picked_provider = get_provider(provider or settings.provider)
-    except ProviderError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--provider") from exc
-    same_provider = picked_provider.name == settings.provider
+    provider_name, model_name = settings.provider, settings.model
     if model:
-        picked_model = model
-    elif same_provider:
-        picked_model = settings.model
-    else:
-        picked_model = settings.models.get(picked_provider.name, picked_provider.default_model)
+        head, separator, rest = model.partition("/")
+        if separator and head in PROVIDERS and rest:
+            provider_name, model_name = head, rest
+        else:
+            model_name = model
+    try:
+        picked_provider = get_provider(provider_name)
+    except ProviderError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--model") from exc
     if effort:
         picked_effort = None if effort.casefold() in DEFAULT_EFFORT_WORDS else effort
-    elif same_provider and picked_model == settings.model:
+    elif (provider_name, model_name) == (settings.provider, settings.model):
         picked_effort = settings.effort
     else:
-        picked_effort = None
+        picked_effort = None  # başka model: kayıtlı effort onda olmayabilir
     return RunConfig(
         provider=picked_provider,
-        model=picked_model,
+        model=model_name,
         effort=picked_effort,
         anatomy=pick_anatomy(anatomy or settings.anatomy or DEFAULT_PRESET),
-        remembered=dict(settings.models),
     )
 
 
@@ -211,7 +246,7 @@ def load_system_prompt(anatomy: Anatomy) -> str:
 def start_session(label: str) -> Path:
     """Çalışma dizinini bulur; neyle ve nerede çalışıldığını yazar."""
     root = find_project_root(Path.cwd())
-    console.print(Text(f"{label} · Çalışma dizini: {root}", style="dim"))
+    console.print(Text(f"{label} · Çalışma dizini: {root}", style="h.muted"))
     return root
 
 
@@ -231,8 +266,36 @@ def chat_session(root: Path, config: RunConfig, http: httpx.AsyncClient) -> Chat
         load_models=lambda provider: list_models(provider, http),
         load_prompt=load_system_prompt,
         sessions_dir=sessions_dir(root),
-        remembered_models=config.remembered,
+        save_choice=remember,
+        login=chatgpt_login,
+        open_url=open_in_browser,
+        theme=load_settings().theme,
     )
+
+
+def open_in_browser(url: str) -> None:
+    typer.launch(url)
+
+
+def remember(session: ChatSession) -> None:
+    """Sohbette yapılan seçim kalıcıdır: bir sonraki `harness` aynı seçimlerle açılır."""
+    save_settings(
+        load_settings().model_copy(
+            update={
+                "provider": session.provider.name,
+                "model": session.model,
+                "effort": session.effort,
+                "anatomy": session.anatomy.name,
+                "theme": session.theme,
+            }
+        )
+    )
+
+
+async def chatgpt_login(on_url: Callable[[str], None]) -> str | None:
+    """Tarayıcı girişi yerel sunucuda bekler; sohbet donmasın diye ayrı iş parçacığında."""
+    credentials = await asyncio.to_thread(login, on_url=on_url)
+    return credentials.email
 
 
 def grant(session: ChatSession, allow: list[str] | None) -> None:
@@ -256,7 +319,7 @@ def run_async[T](make: Callable[[], Coroutine[Any, Any, T]]) -> T:
     try:
         return asyncio.run(make())
     except FAILURES as exc:
-        errors.print(Text(f"Hata: {exc}", style="red"))
+        errors.print(Text(f"Hata: {exc}", style="h.error"))
         raise typer.Exit(1) from exc
     except KeyboardInterrupt as exc:
         errors.print("Durduruldu.")
@@ -283,7 +346,6 @@ def root_command(
         typer.Option("--print", "-p", help="Tek görev çalıştır, yalnız cevabı yaz ve çık"),
     ] = None,
     continue_: ContinueOption = False,
-    provider: ProviderOption = None,
     model: ModelOption = None,
     effort: EffortOption = None,
     anatomy_name: AnatomyOption = None,
@@ -297,9 +359,10 @@ def root_command(
     ] = False,
 ) -> None:
     """Komutsuz çağrı sohbet açar; -p ile tek seferlik görev çalıştırır."""
+    use_theme(load_settings().theme)
     if ctx.invoked_subcommand is not None:
         return
-    config = resolve_config(provider, model, effort, anatomy_name)
+    config = resolve_config(model, effort, anatomy_name)
     if prompt is not None:
         run_once(prompt, config, quiet=True, resume=continue_, allow=allow)
     else:
@@ -317,7 +380,7 @@ def run_once(
     """Tek görev. `quiet` (-p): cevap stdout'a, geri kalan her şey stderr'e."""
     root = find_project_root(Path.cwd()) if quiet else start_session(config.label)
     if not quiet:
-        console.rule("[bold cyan]Sen", align="left")
+        console.rule("[h.user]Sen", align="left")
         console.print(Text(question))
 
     async def run() -> TurnOutcome:
@@ -350,7 +413,16 @@ async def run_turn(
     report: Path | None = None
     streamed_text = ""
     stream_open = False
+    thought_open = False  # düşünce özeti akıyor; sonraki çıktı yeni satırdan başlar
+    thought_seen = False
     finish: TaskFinished | None = None
+
+    def close_thought() -> None:
+        nonlocal thought_open
+        if thought_open:
+            console.print()
+            thought_open = False
+
     try:
         with console.status("Model bekleniyor…") as status:
             if quiet:
@@ -367,6 +439,8 @@ async def run_turn(
                 events.append(event)
                 if isinstance(event, TaskFinished):
                     finish = event
+                if not quiet and not isinstance(event, ModelReasoningDelta):
+                    close_thought()
                 if isinstance(event, PermissionRequested):
                     status.stop()
                     send = _permission(agent, event, interactive=not quiet)
@@ -375,6 +449,7 @@ async def run_turn(
                         console.print(event.text, markup=False, highlight=False, soft_wrap=True)
                 elif isinstance(event, ModelStarted):
                     streamed_text = ""
+                    thought_seen = False
                     status.start()
                     status.update("Model bekleniyor…")
                 elif isinstance(event, ToolStarted):
@@ -384,17 +459,33 @@ async def run_turn(
                     # Araç çıktısı gizli kalır; ne yapıldığı ve sonucu tek satırda görünür.
                     status.stop()
                     console.print(tool_trace(event), soft_wrap=True)
+                elif isinstance(event, ModelReasoningDelta) and event.text:
+                    status.stop()
+                    if not thought_open:
+                        console.print(Text("düşünce · ", style="h.muted"), end="")
+                        thought_open = thought_seen = True
+                    console.print(Text(event.text, style="h.thought"), end="", soft_wrap=True)
                 elif isinstance(event, ModelTextDelta) and event.text:
                     status.stop()
                     if not stream_open:
-                        console.rule("[bold magenta]Ajan", align="left")
+                        console.rule("[h.agent]Ajan", align="left")
                         stream_open = True
                     console.print(Text(event.text), end="", soft_wrap=True)
                     streamed_text += event.text
                 elif isinstance(event, CodeBlocksSaved):
                     status.stop()
-                    console.print(Text(code_blocks_summary(event), style="dim"))
+                    console.print(Text(code_blocks_summary(event), style="h.muted"))
+                elif isinstance(event, HarnessIntervened):
+                    status.stop()
+                    console.print(
+                        Text(f"harness · {intervention_summary(event)}", style="h.harness")
+                    )
                 elif isinstance(event, ModelReplied):
+                    if event.reasoning and not thought_seen:
+                        # Akış vermeyen adaptör: özet tamamlanmış yanıtla gelir.
+                        status.stop()
+                        console.print(Text("düşünce · ", style="h.muted"), end="")
+                        console.print(Text(event.reasoning, style="h.thought"), soft_wrap=True)
                     if stream_open:
                         # Bazı sağlayıcılar son parçayı yalnız tamamlanmış mesajda verir.
                         if event.text.startswith(streamed_text):
@@ -409,7 +500,7 @@ async def run_turn(
                         stream_open = False
                     elif not event.tool_calls and event.text:
                         status.stop()
-                        console.rule("[bold magenta]Ajan", align="left")
+                        console.rule("[h.agent]Ajan", align="left")
                         console.print(Markdown(event.text))
     finally:
         if stream_open:
@@ -421,7 +512,7 @@ async def run_turn(
 
 
 def tool_trace(event: ToolFinished) -> Text:
-    return Text(f"  {live_outcome(event)}", style="yellow" if event.result.is_error else "dim")
+    return Text(f"  {live_outcome(event)}", style="h.warn" if event.result.is_error else "h.muted")
 
 
 def _permission(agent: Agent, event: PermissionRequested, *, interactive: bool) -> bool:
@@ -431,7 +522,7 @@ def _permission(agent: Agent, event: PermissionRequested, *, interactive: bool) 
             Text(
                 f"İzin gerekiyor, reddedildi: {event.call.name} "
                 f"(önceden izin için: --allow {event.call.name})",
-                style="yellow",
+                style="h.warn",
             )
         )
         return False
@@ -451,7 +542,7 @@ def _after_turn(events: list[Event], log: SessionLogger, quiet: bool) -> Path | 
     try:
         report = write_report(log.path)
     except (OSError, ValueError) as exc:
-        errors.print(Text(f"Rapor oluşturulamadı: {exc}", style="yellow"))
+        errors.print(Text(f"Rapor oluşturulamadı: {exc}", style="h.warn"))
         return None
     if not quiet:
         console.print(Text(f"İnceleme: {report}"))
@@ -483,13 +574,13 @@ def run_chat(
         try:
             log_path = run_tui(make, resume=resume)
         except FAILURES as exc:
-            errors.print(Text(f"Hata: {exc}", style="red"))
+            errors.print(Text(f"Hata: {exc}", style="h.error"))
             raise typer.Exit(1) from exc
         if log_path.exists():
             console.print(Text(f"Oturum kaydı: {log_path}"))
         return
     root = start_session(config.label)
-    console.print("/help: komutlar · /exit: çıkış · Ctrl+C: durdur")
+    console.print("/model: model seç · /connect: sağlayıcı bağla · /help: komutlar · /exit: çıkış")
     console.print("Kayıt ve rapor, istemler ve dosya içerikleri gibi hassas veri içerebilir.")
 
     async def run() -> None:
@@ -498,7 +589,10 @@ def run_chat(
             grant(session, allow)
             if resume:
                 show_reply(session.resume_latest())
-            await plain_loop(session)
+            try:
+                await plain_loop(session)
+            finally:
+                session.close()
 
     run_async(run)
 
@@ -507,8 +601,8 @@ async def plain_loop(session: ChatSession) -> None:
     report: Path | None = None
     while True:
         try:
-            console.rule("[bold cyan]Sen", align="left")
-            question = console.input("[bold cyan]> [/]").strip()
+            console.rule("[h.user]Sen", align="left")
+            question = console.input("[h.user]> [/]").strip()
         except EOFError:
             break
         if not question:
@@ -522,27 +616,80 @@ async def plain_loop(session: ChatSession) -> None:
                     typer.launch(report.resolve().as_uri())
                 else:
                     console.print("Henüz rapor yok.")
-            if reply.reset:
-                report = None
-            show_reply(reply)
+            step: CommandReply | None = reply
+            while step is not None:  # liste seçimi bir sonrakini açabilir (model → effort)
+                if step.reset:
+                    report = None
+                show_reply(step)
+                step = await next_step(session, step)
             continue
         console.print()
         report = (await run_turn(session.agent, question, session.log)).report
 
 
+async def next_step(session: ChatSession, reply: CommandReply) -> CommandReply | None:
+    """Sade akışta komutun sıradaki adımı: liste numarayla seçilir, anahtar gizli girilir."""
+    try:
+        if reply.picker is not None:
+            choice = pick(reply.picker)
+            if choice is None:
+                return None
+            return await session.choose(choice.kind or reply.picker.kind, choice.value)
+        if reply.key is not None:
+            console.print(Text(reply.key.prompt, style="h.muted"))
+            # Terminalde yazılan görünmez; boruda (test, betik) zaten yankı yoktur.
+            key = console.input("Anahtar (boş: vazgeç): ", password=sys.stdin.isatty())
+            return await session.save_key(reply.key.provider, key) if key.strip() else None
+        if reply.login:
+            return await session.login(
+                on_url=lambda url: console.print(
+                    f"Tarayıcı açılamadı; bu adresi tarayıcıya yapıştır:\n{url}"
+                )
+            )
+    except EOFError:
+        return None
+    return None
+
+
+def pick(picker: Picker) -> Choice | None:
+    """Listeyi numaralı tablo olarak gösterir; seçilemeyen satırlar numarasızdır."""
+    table = Table(title=picker.title, title_justify="left", show_header=False, box=None)
+    numbered: list[Choice] = []
+    group = ""
+    for choice in picker.choices:
+        if choice.group and choice.group != group:
+            group = choice.group
+            table.add_row("", Text(group, style="bold"), "")
+        number = ""
+        if choice.enabled:
+            numbered.append(choice)
+            number = str(len(numbered))
+        mark = "●" if choice.current else " "
+        table.add_row(f"{mark} {number}", Text(choice.label), Text(choice.detail, style="h.muted"))
+    console.print(table)
+    while True:
+        answer = console.input("Numara (boş: vazgeç): ").strip()
+        if not answer:
+            return None
+        if answer.isdigit() and 1 <= int(answer) <= len(numbered):
+            return numbered[int(answer) - 1]
+        console.print("Listede böyle bir numara yok.")
+
+
 def show_reply(reply: CommandReply) -> None:
+    if reply.theme is not None:
+        use_theme(reply.theme)
     for role, text in reply.transcript:
-        console.rule(f"[bold {'cyan' if role == 'Sen' else 'magenta'}]{role}", align="left")
+        console.rule(f"[{'h.user' if role == 'Sen' else 'h.agent'}]{role}", align="left")
         console.print(Markdown(text) if role == "Ajan" else Text(text))
     if reply.text:
         if reply.transcript:
-            console.rule(style="dim")
+            console.rule(style="h.muted")
         console.print(Markdown(reply.text))
 
 
 @app.command(hidden=True)
 def chat(
-    provider: ProviderOption = None,
     model: ModelOption = None,
     effort: EffortOption = None,
     anatomy_name: AnatomyOption = None,
@@ -551,39 +698,24 @@ def chat(
     continue_: ContinueOption = False,
 ) -> None:
     """Eski ad: `harness` ile aynı (etkileşimli sohbet)."""
-    config = resolve_config(provider, model, effort, anatomy_name)
+    config = resolve_config(model, effort, anatomy_name)
     run_chat(config, plain=plain, resume=continue_, allow=allow)
 
 
 @app.command(hidden=True)
 def ask(
     question: Annotated[str, typer.Argument(help="Modele sorulacak soru")],
-    provider: ProviderOption = None,
     model: ModelOption = None,
     effort: EffortOption = None,
     anatomy_name: AnatomyOption = None,
     allow: AllowOption = None,
 ) -> None:
     """Eski ad: tek görev, konuşma biçiminde (-p'nin süslü hâli)."""
-    config = resolve_config(provider, model, effort, anatomy_name)
+    config = resolve_config(model, effort, anatomy_name)
     run_once(question, config, quiet=False, allow=allow)
 
 
-# ---------------------------------------------------------------- kalıcı seçimler
-
-
-def choose(title: str, rows: list[tuple[str, str]], default: int) -> int:
-    """Numaralı bir liste gösterir, kullanıcının seçtiği satırın sırasını (0'dan) döner."""
-    table = Table(title=title, title_justify="left", show_header=False, box=None)
-    for number, (name, description) in enumerate(rows, start=1):
-        marker = "●" if number - 1 == default else " "
-        table.add_row(f"{marker} {number}", f"[bold]{name}[/]", f"[dim]{description}[/]")
-    console.print(table)
-    choices = [str(number) for number in range(1, len(rows) + 1)]
-    number = IntPrompt.ask(
-        "Numara", choices=choices, show_choices=False, default=default + 1, console=console
-    )
-    return number - 1
+# ---------------------------------------------------------------- bilgi
 
 
 def fetch_models(provider: Provider) -> list[ModelInfo]:
@@ -594,233 +726,31 @@ def fetch_models(provider: Provider) -> list[ModelInfo]:
     return run_async(run)
 
 
-def _pick[T](items: list[T], argument: str, names: Callable[[T], tuple[str, ...]]) -> T | None:
-    if argument.isdigit():
-        index = int(argument) - 1
-        return items[index] if 0 <= index < len(items) else None
-    wanted = argument.casefold()
-    return next((i for i in items if wanted in (n.casefold() for n in names(i))), None)
-
-
-def _current() -> tuple[Settings, Provider]:
-    settings = load_settings()
-    try:
-        return settings, get_provider(settings.provider)
-    except ProviderError as exc:
-        errors.print(Text(f"Kayıtlı sağlayıcı geçersiz: {exc}", style="red"))
-        raise typer.Exit(1) from exc
-
-
-@app.command()
-def provider(
-    name: Annotated[str | None, typer.Argument(help="Sağlayıcı adı ya da numarası")] = None,
-) -> None:
-    """Varsayılan sağlayıcıyı seçer; model o sağlayıcıda son kullanılana döner."""
-    settings, current = _current()
-    providers = list(PROVIDERS.values())
-    if name is None:
-        rows = [(p.name, f"{p.label} · {readiness(p)[1]}") for p in providers]
-        picked = providers[choose("Sağlayıcılar", rows, providers.index(current))]
-    else:
-        found = _pick(providers, name, lambda p: (p.name,))
-        if found is None:
-            errors.print(Text(f"'{name}' adlı sağlayıcı yok: {', '.join(PROVIDERS)}", style="red"))
-            raise typer.Exit(1)
-        picked = found
-    models = {**settings.models, current.name: settings.model}
-    model_name = models.get(picked.name, picked.default_model)
-    effort = settings.effort if picked.name == current.name else None
-    save_settings(
-        settings.model_copy(
-            update={
-                "provider": picked.name,
-                "model": model_name,
-                "effort": effort,
-                "models": models,
-            }
-        )
-    )
-    ready, detail = readiness(picked)
-    console.print(f"[green]Kaydedildi:[/] {picked.name} · {model_name}")
-    if not ready:
-        console.print(Text(f"Uyarı: {detail}", style="yellow"))
-
-
-@app.command()
-def model(
-    name: Annotated[str | None, typer.Argument(help="Model adı ya da numarası")] = None,
-) -> None:
-    """Varsayılan modeli seçer (yalnız model; düşünme seviyesi `harness effort`)."""
-    settings, current = _current()
-    models = fetch_models(current)
-    if not models:
-        errors.print(Text(f"{current.name} model listesi boş.", style="red"))
-        raise typer.Exit(1)
-    if name is None:
-        slugs = [m.slug for m in models]
-        index = slugs.index(settings.model) if settings.model in slugs else 0
-        picked = models[
-            choose(
-                f"{current.name} modelleri (şu an: {settings.model})",
-                [(m.display_name, m.description or m.slug) for m in models],
-                index,
-            )
-        ]
-    else:
-        found = _pick(models, name, lambda m: (m.slug, m.display_name))
-        if found is None:
-            errors.print(Text(f"'{name}' adlı model yok. Liste: harness models", style="red"))
-            raise typer.Exit(1)
-        picked = found
-    # Aynı effort yeni modelde varsa kalır; yoksa modelin kendi varsayılanına dönülür.
-    keep = settings.effort in {e.name for e in picked.efforts}
-    effort = settings.effort if keep else None
-    save_settings(
-        settings.model_copy(
-            update={
-                "model": picked.slug,
-                "effort": effort,
-                "models": {**settings.models, current.name: picked.slug},
-            }
-        )
-    )
-    console.print(
-        f"[green]Kaydedildi:[/] {current.name} · {picked.slug} · effort: {effort or 'varsayılan'}"
-    )
-
-
-@app.command()
-def effort(
-    level: Annotated[
-        str | None, typer.Argument(help="Seviye adı, numarası ya da 'varsayılan'")
-    ] = None,
-) -> None:
-    """Varsayılan düşünme seviyesini (effort) seçer; model değişmez."""
-    settings, current = _current()
-    if level is not None and level.casefold() in DEFAULT_EFFORT_WORDS:
-        save_settings(settings.model_copy(update={"effort": None}))
-        console.print(f"[green]Kaydedildi:[/] {settings.model} · effort: varsayılan")
-        return
-    info = next((m for m in fetch_models(current) if m.slug == settings.model), None)
-    if info is None or not info.efforts:
-        errors.print(Text(f"{settings.model} için effort seviyeleri bilinmiyor.", style="red"))
-        raise typer.Exit(1)
-    names = [e.name for e in info.efforts]
-    if level is None:
-        rows = [("varsayılan", f"modelin kendi seçimi ({info.default_effort or '—'})")] + [
-            (e.name, e.description + (" (önerilen)" if e.name == info.default_effort else ""))
-            for e in info.efforts
-        ]
-        current_index = names.index(settings.effort) + 1 if settings.effort in names else 0
-        index = choose(f"{info.display_name} ne kadar düşünsün?", rows, current_index)
-        picked = None if index == 0 else names[index - 1]
-    else:
-        found = _pick(info.efforts, level, lambda e: (e.name,))
-        if found is None:
-            errors.print(Text(f"'{level}' yok. Seviyeler: {', '.join(names)}", style="red"))
-            raise typer.Exit(1)
-        picked = found.name
-    save_settings(settings.model_copy(update={"effort": picked}))
-    console.print(f"[green]Kaydedildi:[/] {settings.model} · effort: {picked or 'varsayılan'}")
-
-
-@app.command()
-def anatomy(
-    name: Annotated[str | None, typer.Argument(help="Anatomi: raw, files, bash")] = None,
-) -> None:
-    """Varsayılan anatomiyi (açık katmanları) seçer."""
-    settings = load_settings()
-    presets = list(PRESETS.values())
-    current = settings.anatomy or DEFAULT_PRESET
-    if name is None:
-        rows = [(a.name, ", ".join(a.tools) or "araç yok (seviye 0)") for a in presets]
-        index = [a.name for a in presets].index(current) if current in PRESETS else 0
-        picked = presets[choose("Anatomiler", rows, index)].name
-    else:
-        picked = pick_anatomy(name).name
-    save_settings(settings.model_copy(update={"anatomy": picked}))
-    console.print(f"[green]Kaydedildi:[/] anatomi: {picked}")
-
-
-# ---------------------------------------------------------------- bilgi
-
-
-@app.command()
-def status() -> None:
-    """Kayıtlı seçimler, sağlayıcıların hazırlığı, proje ve kayıt klasörü."""
-    settings, current = _current()
-    root = find_project_root(Path.cwd())
-    table = Table(show_header=False, box=None)
-    table.add_row("Sağlayıcı", f"{current.name} — {current.label}")
-    table.add_row("Model", settings.model)
-    table.add_row("Effort", settings.effort or "varsayılan")
-    table.add_row("Anatomi", settings.anatomy or DEFAULT_PRESET)
-    table.add_row("Proje", str(root))
-    table.add_row("Kayıtlar", str(sessions_dir(root)))
-    console.print(table)
-    console.print()
-    providers_command()
-
-
-@app.command(name="providers")
-def providers_command() -> None:
-    """Sağlayıcılar ve hazır olup olmadıkları (anahtar/giriş)."""
-    current = load_settings().provider
-    local = [p for p in PROVIDERS.values() if p.local]
-
-    async def probe() -> dict[str, bool]:
-        async with httpx.AsyncClient() as http:
-            results = await asyncio.gather(*(reachable(p, http) for p in local))
-        return {p.name: ok for p, ok in zip(local, results, strict=True)}
-
-    alive = asyncio.run(probe())
-    table = Table(title="Sağlayıcılar", title_justify="left")
-    table.add_column("")
-    table.add_column("Ad")
-    table.add_column("Sağlayıcı")
-    table.add_column("Varsayılan model")
-    table.add_column("Durum")
-    for p in PROVIDERS.values():
-        ready, detail = readiness(p)
-        if p.local:
-            ready = alive[p.name]
-            detail = f"{'çalışıyor' if ready else 'kapalı'}: {p.url(os.environ)}"
-        table.add_row(
-            "●" if p.name == current else "",
-            p.name,
-            p.label,
-            p.default_model,
-            Text(("✓ " if ready else "✗ ") + detail, style="green" if ready else "yellow"),
-        )
-    console.print(table)
-
-
 @app.command()
 def models(
     provider_name: Annotated[
-        str | None, typer.Option("--provider", help="Hangi sağlayıcının modelleri")
+        str | None, typer.Argument(help="Sağlayıcı (verilmezse kayıtlı olan)")
     ] = None,
 ) -> None:
-    """Sağlayıcının sunduğu modeller ve effort seviyeleri."""
-    settings, current = _current()
-    if provider_name:
-        try:
-            current = get_provider(provider_name)
-        except ProviderError as exc:
-            raise typer.BadParameter(str(exc), param_hint="--provider") from exc
+    """Sağlayıcının sunduğu modeller ve effort seviyeleri (betikler için; sohbette /model)."""
+    settings = load_settings()
+    try:
+        current = get_provider(provider_name or settings.provider)
+    except ProviderError as exc:
+        raise typer.BadParameter(str(exc), param_hint="sağlayıcı") from exc
     table = Table(title=f"{current.name} modelleri", title_justify="left")
-    table.add_column("No")
-    table.add_column("Ad")
     table.add_column("Model")
+    table.add_column("Ad")
     table.add_column("Effort")
-    for i, m in enumerate(fetch_models(current), start=1):
-        mark = "●" if m.slug == settings.model and current.name == settings.provider else ""
-        table.add_row(
-            f"{mark} {i}",
-            m.slug,
-            m.display_name,
-            ", ".join(e.name for e in m.efforts) or "—",
-        )
+    found = fetch_models(current)
+    notes = any(m.description for m in found)
+    if notes:
+        table.add_column("Not")  # ör. OpenCode'da modelin API biçimi, "ücretsiz"
+    for m in found:
+        mark = "● " if m.slug == settings.model and current.name == settings.provider else ""
+        row = [f"{mark}{current.name}/{m.slug}", m.display_name]
+        row.append(", ".join(e.name for e in m.efforts) or "—")
+        table.add_row(*row, *([short(m.description, 40)] if notes else []))
     console.print(table)
 
 
@@ -945,13 +875,15 @@ def replay(path: Annotated[Path, typer.Argument(help="Oturum kaydı (.jsonl)")])
         nonlocal partial_step
         if partial_step is not None:
             console.print()
-            console.print(Text("Yanıt tamamlanmadı.", style="yellow"))
+            console.print(Text("Yanıt tamamlanmadı.", style="h.warn"))
             partial_step = None
 
     for event in events:
         if isinstance(event, TaskStarted):
             close_partial()
             turn_index += 1
+        if isinstance(event, ModelReasoningDelta):
+            continue  # düşüncenin tamamı ModelReplied ile çizilir
         if isinstance(event, ModelTextDelta):
             key = (turn_index, event.step)
             if partial_step is not None and partial_step != key:
@@ -960,7 +892,7 @@ def replay(path: Annotated[Path, typer.Argument(help="Oturum kaydı (.jsonl)")])
                 continue
             if partial_step is None:
                 console.rule(
-                    f"[bold yellow]Ajan · adım {event.step} · kısmi yanıt[/]", align="left"
+                    f"[h.warn.strong]Ajan · adım {event.step} · kısmi yanıt[/]", align="left"
                 )
                 partial_step = key
             console.print(Text(event.text), end="", soft_wrap=True)
@@ -968,6 +900,152 @@ def replay(path: Annotated[Path, typer.Argument(help="Oturum kaydı (.jsonl)")])
         close_partial()
         render(console, event)
     close_partial()
+
+
+# ---------------------------------------------------------------- deney
+
+
+def show_eval(results: list[TaskResult]) -> None:
+    console.print()
+    console.print(summary_table(summarize(results)))
+    if len({r.task_id for r in results}) > 1 or len({r.variant for r in results}) > 1:
+        console.print(task_table(results))
+
+
+@app.command(name="eval")
+def eval_command(
+    tasks_dir: Annotated[
+        Path, typer.Argument(help="Görev klasörü (her alt klasör: task.md, repo/, tests/)")
+    ] = Path("tasks"),
+    models: Annotated[
+        list[str] | None,
+        typer.Option("--model", "-m", help="Varyant modeli: sağlayıcı/model (tekrarlanabilir)"),
+    ] = None,
+    anatomies: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--anatomy", help=f"Varyant anatomisi (tekrarlanabilir): {', '.join(PRESETS)}"
+        ),
+    ] = None,
+    effort: EffortOption = None,
+    repeat: Annotated[int, typer.Option("--repeat", "-n", min=1, help="Her koşu kaç kez")] = 1,
+    max_steps: Annotated[
+        int, typer.Option("--max-steps", min=1, help="Koşu başı adım sınırı")
+    ] = 20,
+    only: Annotated[
+        list[str] | None, typer.Option("--only", help="Yalnız adı bununla başlayan görevler")
+    ] = None,
+    report: Annotated[
+        Path | None, typer.Option("--report", help="Koşmadan, var olan deneyin özetini göster")
+    ] = None,
+    watch_live: Annotated[
+        bool, typer.Option("--watch", help="Koşuları canlı panelde (tarayıcı) izle")
+    ] = False,
+) -> None:
+    """Deney: görevler × (model × anatomi) × tekrar; gizli testlerle puanlanır.
+
+    Örnek: harness eval -m opencode-go/glm-5.3 --anatomy files --anatomy bash -n 3
+    """
+    if report is not None:
+        try:
+            show_eval(read_results(report))
+        except (OSError, ValueError, TypeError) as exc:
+            console.print(Text(f"Deney okunamadı: {exc}", style="h.error"))
+            raise typer.Exit(1) from exc
+        return
+    if not tasks_dir.is_dir():
+        raise typer.BadParameter(f"{tasks_dir} klasör değil.", param_hint="görev klasörü")
+    tasks = find_tasks(tasks_dir, only or ())
+    if not tasks:
+        raise typer.BadParameter(f"{tasks_dir} altında task.md içeren görev yok.")
+    configs = [
+        resolve_config(model, effort, anatomy)
+        for model in (models or [None])
+        for anatomy in (anatomies or [None])
+    ]
+    for config in configs:
+        ready, why = readiness(config.provider)
+        if not ready:
+            console.print(Text(f"{config.provider.name} hazır değil: {why}", style="h.error"))
+            raise typer.Exit(1)
+    out_dir = EVALS_HOME / f"{datetime.now():%Y%m%d-%H%M%S}-{secrets.token_hex(3)}"
+    total = len(tasks) * len(configs) * repeat
+    console.print(
+        Text(
+            f"{len(tasks)} görev × {len(configs)} varyant × {repeat} tekrar = {total} koşu · "
+            f"kayıt: {out_dir}",
+            style="h.muted",
+        )
+    )
+
+    panel = WatchServer(out_dir) if watch_live else None
+    if panel is not None:
+        url = panel.start()
+        console.print(Text(f"Canlı panel: {url}", style="h.muted"))
+        open_in_browser(url)
+
+    async def run() -> list[TaskResult]:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300, connect=15)) as http:
+            variants = [
+                Variant(
+                    label=f"{c.provider.name}/{c.model} · {c.anatomy.name}",
+                    anatomy=c.anatomy,
+                    make_llm=lambda c=c: make_llm(c.provider, c.model, c.effort, http),
+                    system_prompt=load_system_prompt(c.anatomy),
+                    provider=c.provider.name,
+                    model=c.model,
+                    effort=c.effort,
+                )
+                for c in configs
+            ]
+            return await run_matrix(
+                tasks,
+                variants,
+                out_dir,
+                repeats=repeat,
+                max_steps=max_steps,
+                on_result=lambda r: console.print(result_line(r)),
+            )
+
+    try:
+        results = run_async(run)
+    except KeyboardInterrupt:
+        console.print(Text("Deney yarıda kesildi; biten koşular kayıtlı.", style="h.warn"))
+        results = read_results(out_dir) if (out_dir / "results.jsonl").exists() else []
+    if results:
+        show_eval(results)
+    console.print(
+        Text(f"Sonuçlar: {out_dir} · yeniden özet: harness eval --report <klasör>", style="h.muted")
+    )
+
+
+@app.command(name="watch")
+def watch_command(
+    folder: Annotated[
+        Path | None,
+        typer.Argument(help="İzlenecek kayıt klasörü (verilmezse bu projenin oturumları)"),
+    ] = None,
+    evals: Annotated[bool, typer.Option("--evals", help="Deney kayıtlarını izle")] = False,
+    port: Annotated[int, typer.Option(help="Yerel port (0: boş bir port seçilir)")] = 0,
+    open_browser: Annotated[bool, typer.Option("--open/--no-open", help="Tarayıcıda aç")] = True,
+) -> None:
+    """Canlı panel: kayıtları tarayıcıda akarken gösterir; en yeni kayda kendiliğinden geçer."""
+    target = folder or (EVALS_HOME if evals else sessions_dir(find_project_root(Path.cwd())))
+    panel = WatchServer(target)
+    try:
+        url = panel.start(port)
+    except OSError as exc:
+        console.print(Text(f"Canlı panel açılamadı: {exc}", style="h.error"))
+        raise typer.Exit(1) from exc
+    console.print(f"Canlı panel: {url} · izlenen: {target} · kapatmak için Ctrl+C")
+    if open_browser:
+        open_in_browser(url)
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        panel.close()
 
 
 @app.command(name="inspect")
@@ -980,7 +1058,7 @@ def inspect_session(
     try:
         report = write_report(path, output)
     except (OSError, ValueError) as exc:
-        console.print(Text(f"İnceleme açılamadı: {exc}", style="red"))
+        console.print(Text(f"İnceleme açılamadı: {exc}", style="h.error"))
         raise typer.Exit(1) from exc
     console.print(Text(f"İnceleme: {report}"))
     if open_browser:

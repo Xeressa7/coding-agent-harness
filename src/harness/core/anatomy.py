@@ -10,6 +10,7 @@ Komut ve ağ araçları varsayılan pakette değildir: çalışma dizininin dı�
 dokunabilirler, bu yüzden açıkça seçilmelidir (izin katmanı yine her çağrıyı sorar).
 """
 
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
@@ -71,6 +72,7 @@ class Anatomy(BaseModel):
     tools: tuple[ToolName, ...] = ()
     prompt: Literal["agent", "raw"] = "agent"  # prompts/ altındaki talimat dosyası
     save_code_blocks: bool = False  # seviye 0: cevaptaki adlı kod blokları dosyaya yazılır
+    loop_guard: bool = False  # takılma uyarısı (core/guards.py)
 
     def tool_registry(self, root: Path) -> ToolRegistry:
         """Açık araçları, çalışma dizinine bağlı olarak kurar."""
@@ -85,10 +87,27 @@ PRESETS: dict[str, Anatomy] = {
 }
 DEFAULT_PRESET = "files"
 
+# Preset'in üstüne `+ad` ile açılıp `-ad` ile kapatılan katmanlar: `bash+loop_guard`.
+LAYERS: dict[str, str] = {
+    "loop_guard": "aynı araç çağrısı art arda 3 kez gelince modeli uyarır, 5'te durdurur",
+}
+
 
 def get_preset(name: str) -> Anatomy:
+    """Preset adı, ardından isteğe bağlı katman ekleri: `files`, `bash+loop_guard`."""
+    base, *changes = re.split(r"(?=[+-])", name.strip())
     try:
-        return PRESETS[name]
+        anatomy = PRESETS[base]
     except KeyError:
         known = ", ".join(PRESETS)
-        raise ValueError(f"'{name}' adında anatomi yok. Var olanlar: {known}") from None
+        raise ValueError(f"'{base}' adında anatomi yok. Var olanlar: {known}") from None
+    update: dict[str, object] = {}
+    for change in changes:
+        layer = change[1:]
+        if layer not in LAYERS:
+            known = ", ".join(LAYERS)
+            raise ValueError(f"'{layer}' adında katman yok. Var olanlar: {known}")
+        update[layer] = change[0] == "+"
+    if not update:
+        return anatomy
+    return anatomy.model_copy(update={**update, "name": name.strip()})

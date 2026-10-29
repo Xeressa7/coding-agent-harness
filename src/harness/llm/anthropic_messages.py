@@ -21,10 +21,11 @@ from typing import Any
 import anthropic
 from anthropic import AsyncAnthropic
 
-from harness.llm.base import Effort, LLMError, ModelInfo
+from harness.llm.base import Effort, LLMError, ModelInfo, error_message
 from harness.messages import (
     AssistantMessage,
     Message,
+    ReasoningDelta,
     SystemMessage,
     TextDelta,
     TokenUsage,
@@ -71,10 +72,26 @@ class AnthropicError(LLMError):
 class AnthropicLLM:
     """Messages API ile konuşan model adaptörü; her çağrı akışlıdır."""
 
-    def __init__(self, client: AsyncAnthropic, model: str, effort: str | None = None) -> None:
+    def __init__(
+        self,
+        client: AsyncAnthropic,
+        model: str,
+        effort: str | None = None,
+        *,
+        fallbacks: bool = True,
+    ) -> None:
         self._client = client
         self._model = model
         self._effort = effort
+        self._fallbacks = fallbacks  # aracı (ör. OpenCode) üzerinden giderken kapalı
+
+    @property
+    def client(self) -> AsyncAnthropic:
+        return self._client
+
+    @property
+    def fallbacks(self) -> bool:
+        return self._fallbacks
 
     async def complete(
         self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
@@ -86,10 +103,12 @@ class AnthropicLLM:
 
     async def stream(
         self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
-    ) -> AsyncGenerator[TextDelta | AssistantMessage, None]:
+    ) -> AsyncGenerator[TextDelta | ReasoningDelta | AssistantMessage, None]:
         started = perf_counter()
         first_text_seconds: float | None = None
-        request = build_request(self._model, history, tools, self._effort)
+        request = build_request(
+            self._model, history, tools, self._effort, fallbacks=self._fallbacks
+        )
         try:
             async with self._client.beta.messages.stream(**request) as stream:
                 async for event in stream:
@@ -97,9 +116,11 @@ class AnthropicLLM:
                         if first_text_seconds is None:
                             first_text_seconds = perf_counter() - started
                         yield TextDelta(text=event.text)
+                    elif event.type == "thinking" and event.thinking:
+                        yield ReasoningDelta(text=event.thinking)
                 final = await stream.get_final_message()
         except anthropic.APIStatusError as e:
-            raise AnthropicError(f"HTTP {e.status_code}: {e.message}") from e
+            raise _status_error(e) from e
         except anthropic.APIConnectionError as e:
             raise AnthropicError(f"Bağlantı hatası: {e}") from e
         except ValueError as e:
@@ -134,6 +155,8 @@ def build_request(
     history: Sequence[Message],
     tools: Sequence[ToolSpec] = (),
     effort: str | None = None,
+    *,
+    fallbacks: bool = True,
 ) -> dict[str, Any]:
     """messages.py geçmişini `beta.messages.stream` argümanlarına çevirir."""
     system: list[str] = []
@@ -188,7 +211,7 @@ def build_request(
             }
             for tool in tools
         ]
-    if model in _FALLBACK_MODELS:
+    if fallbacks and model in _FALLBACK_MODELS:
         request["fallbacks"] = "default"
         request["betas"] = [FALLBACK_BETA]
     return request
@@ -236,7 +259,7 @@ async def list_anthropic_models(client: AsyncAnthropic) -> list[ModelInfo]:
             async for model in client.models.list()
         ]
     except anthropic.APIStatusError as e:
-        raise AnthropicError(f"HTTP {e.status_code}: {e.message}") from e
+        raise _status_error(e) from e
     except anthropic.APIConnectionError as e:
         raise AnthropicError(f"Bağlantı hatası: {e}") from e
 
@@ -263,3 +286,10 @@ def _assistant_content(message: AssistantMessage) -> list[dict[str, Any]]:
             }
         )
     return content
+
+
+def _status_error(error: anthropic.APIStatusError) -> AnthropicError:
+    return AnthropicError(
+        f"HTTP {error.status_code}: {error_message(error.body) or error.message}",
+        status=error.status_code,
+    )

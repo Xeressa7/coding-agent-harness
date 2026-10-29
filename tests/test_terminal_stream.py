@@ -193,7 +193,7 @@ async def test_failure_or_cancellation_after_first_chunk_closes_http_and_keeps_p
 
 
 @pytest.mark.anyio
-async def test_streamed_tool_turn_hides_raw_arguments_results_and_reasoning(
+async def test_streamed_tool_turn_hides_raw_arguments_and_results_but_shows_thought(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -223,7 +223,7 @@ async def test_streamed_tool_turn_hides_raw_arguments_results_and_reasoning(
     )
     final = b"".join(
         [
-            sse("response.reasoning_summary_text.delta", delta="HIDDEN_REASONING"),
+            sse("response.reasoning_summary_text.delta", delta="THOUGHT_SUMMARY"),
             sse("response.output_text.delta", delta="Son "),
             sse("response.output_text.delta", delta="yanıt."),
             sse(
@@ -266,8 +266,12 @@ async def test_streamed_tool_turn_hides_raw_arguments_results_and_reasoning(
         await cli.run_turn(agent, "incele", log)
         await cli.run_turn(agent, "hatırla", log)
     shown = output.getvalue()
-    for secret in ["secret-file.txt", "HIDDEN_RESULT", "HIDDEN_ARGUMENTS", "HIDDEN_REASONING"]:
+    for secret in ["secret-file.txt", "HIDDEN_RESULT", "HIDDEN_ARGUMENTS"]:
         assert secret not in shown
+    # Düşünce özeti bir kez, "düşünce" etiketiyle ve cevaptan önce görünür (kullanıcı, 2026-10-26).
+    assert shown.count("THOUGHT_SUMMARY") == 1
+    assert "düşünce · THOUGHT_SUMMARY\n" in shown
+    assert shown.index("THOUGHT_SUMMARY") < shown.index("Son yanıt.")
     assert shown.count("İnceliyorum.") == 1
     assert shown.count("Son yanıt.") == 1 and shown.count("Hatırlıyorum.") == 1
     history = json.loads(seen[-1].content)["input"]

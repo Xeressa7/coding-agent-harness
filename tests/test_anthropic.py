@@ -16,6 +16,7 @@ from harness.llm.anthropic_messages import (
 from harness.messages import (
     AssistantMessage,
     Message,
+    ReasoningDelta,
     SystemMessage,
     TextDelta,
     ToolCall,
@@ -104,7 +105,9 @@ def client_for(body: str, seen: list[httpx2.Request] | None = None) -> AsyncAnth
     )
 
 
-async def collect(llm: AnthropicLLM, history: list[Message]) -> list[TextDelta | AssistantMessage]:
+async def collect(
+    llm: AnthropicLLM, history: list[Message]
+) -> list[TextDelta | ReasoningDelta | AssistantMessage]:
     return [part async for part in llm.stream(history, [TOOL])]
 
 
@@ -115,7 +118,11 @@ async def test_stream_becomes_text_tool_call_reasoning_and_total_usage() -> None
             AnthropicLLM(client, "claude-opus-5-5", "high"), [UserMessage(text="oku")]
         )
 
-    assert parts[:-1] == [TextDelta(text="Okuyorum.")]
+    # Düşünce de canlı akar (soluk gösterilir); tamamı yine reply.reasoning'dedir.
+    assert parts[:-1] == [
+        ReasoningDelta(text="Önce dosyaya bakmalıyım."),
+        TextDelta(text="Okuyorum."),
+    ]
     reply = parts[-1]
     assert isinstance(reply, AssistantMessage)
     assert reply.text == "Okuyorum."

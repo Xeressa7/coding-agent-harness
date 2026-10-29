@@ -25,6 +25,8 @@ from harness.core.events import (
     CodeBlocksSaved,
     ContextAssembled,
     Event,
+    HarnessIntervened,
+    ModelReasoningDelta,
     ModelReplied,
     ModelStarted,
     ModelTextDelta,
@@ -34,9 +36,17 @@ from harness.core.events import (
     ToolFinished,
     ToolStarted,
 )
+from harness.core.guards import RepeatGuard
 from harness.core.permissions import Decision, PermissionManager
 from harness.llm.base import LLMClient, StreamingLLMClient
-from harness.messages import AssistantMessage, Message, SystemMessage, ToolResult, UserMessage
+from harness.messages import (
+    AssistantMessage,
+    Message,
+    ReasoningDelta,
+    SystemMessage,
+    ToolResult,
+    UserMessage,
+)
 from harness.tools.base import ToolRegistry
 
 
@@ -83,6 +93,7 @@ class Agent:
 
     async def run(self, task: str) -> AsyncGenerator[Event, bool | None]:
         self.history.append(UserMessage(text=task))
+        guard = RepeatGuard() if self._anatomy and self._anatomy.loop_guard else None
         started = perf_counter()
         step = 0
         yield TaskStarted(
@@ -112,9 +123,13 @@ class Agent:
                                 break
                             if part.text:
                                 paused = perf_counter()
-                                yield ModelTextDelta(
-                                    step=step, text=part.text, timestamp=datetime.now(UTC)
-                                )
+                                now = datetime.now(UTC)
+                                if isinstance(part, ReasoningDelta):
+                                    yield ModelReasoningDelta(
+                                        step=step, text=part.text, timestamp=now
+                                    )
+                                else:
+                                    yield ModelTextDelta(step=step, text=part.text, timestamp=now)
                                 consumer_seconds += perf_counter() - paused
                     if reply is None:
                         raise RuntimeError("Model akışı tamamlanmış yanıt vermeden bitti.")
@@ -154,6 +169,31 @@ class Agent:
 
                 for call in reply.tool_calls:
                     category, summary = self._tools.describe(call)
+                    verdict = guard.check(call) if guard else None
+                    if verdict is not None:
+                        yield HarnessIntervened(
+                            step=step,
+                            layer="loop_guard",
+                            action=verdict.action,
+                            summary=f"{call.name} art arda {verdict.repeats}. kez",
+                            call_id=call.id,
+                            timestamp=datetime.now(UTC),
+                        )
+                    if verdict is not None and verdict.action == "block":
+                        result = ToolResult(
+                            tool_call_id=call.id, content=verdict.message(call.name), is_error=True
+                        )
+                        self.history.append(result)
+                        yield ToolFinished(
+                            call=call,
+                            result=result,
+                            duration_seconds=0.0,
+                            category=category,
+                            summary=summary,
+                            outcome="takılma: çalıştırılmadı",
+                            timestamp=datetime.now(UTC),
+                        )
+                        continue
                     decision = self.permissions.decide(call)
                     if decision is Decision.ASK:
                         answer = yield PermissionRequested(
@@ -183,10 +223,15 @@ class Agent:
                     tool_started = perf_counter()
                     outcome = await self._tools.execute(call)
                     tool_duration = perf_counter() - tool_started
-                    self.history.append(outcome.result)
+                    result = outcome.result
+                    if verdict is not None:  # uyarı: çağrı çalıştı, modele not düşülür
+                        note = verdict.message(call.name)
+                        content = f"{result.content}\n\n{note}"
+                        result = result.model_copy(update={"content": content})
+                    self.history.append(result)
                     yield ToolFinished(
                         call=call,
-                        result=outcome.result,
+                        result=result,
                         duration_seconds=tool_duration,
                         category=category,
                         summary=summary,

@@ -8,24 +8,41 @@ from pathlib import Path
 import pytest
 from textual.containers import VerticalScroll
 from textual.events import MouseScrollDown
-from textual.widgets import Button
+from textual.widgets import Button, Input, OptionList, Static
 
 from harness.cli.commands import ChatSession
-from harness.cli.tui import ChatMessage, ComposeInput, HarnessApp, PermissionDialog
+from harness.cli.tui import (
+    ChatMessage,
+    ComposeInput,
+    HarnessApp,
+    KeyScreen,
+    PermissionDialog,
+    PickerScreen,
+    ThoughtBlock,
+)
 from harness.core.anatomy import get_preset
 from harness.core.events import TaskFinished, TaskStarted
 from harness.core.session_log import read_session
-from harness.llm.base import ModelInfo
+from harness.llm.base import Effort, ModelInfo
+from harness.llm.credentials import load_keys
 from harness.llm.providers import Provider, get_provider
 from harness.llm.scripted import ScriptedLLM
-from harness.messages import AssistantMessage, Message, TextDelta, TokenUsage, ToolCall, ToolSpec
+from harness.messages import (
+    AssistantMessage,
+    Message,
+    ReasoningDelta,
+    TextDelta,
+    TokenUsage,
+    ToolCall,
+    ToolSpec,
+)
 
 pytestmark = pytest.mark.anyio
 
 
 def make_app(model: object, tmp_path: Path) -> HarnessApp:
     # Concrete LLM doubles below satisfy the shared complete/stream protocols.
-    assert isinstance(model, (ScriptedLLM, ControlledModel))
+    assert isinstance(model, (ScriptedLLM, ControlledModel, ThinkingModel))
 
     async def no_models(provider: Provider) -> list[ModelInfo]:
         raise RuntimeError("testte model listesi yok")
@@ -310,6 +327,49 @@ async def test_tool_details_only_in_report_not_chat_or_flow(tmp_path: Path) -> N
         assert "PRIVATE_PATH" in html and "PRIVATE_TOOL_RESULT" in html
 
 
+class ThinkingModel:
+    """Önce düşünce özetini, sonra cevabı akıtan model."""
+
+    async def complete(
+        self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> AssistantMessage:
+        raise AssertionError("Streaming capability should be used")
+
+    async def stream(
+        self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> AsyncGenerator[TextDelta | ReasoningDelta | AssistantMessage, None]:
+        yield ReasoningDelta(text="Önce testlere ")
+        yield ReasoningDelta(text="bakmalıyım.")
+        yield TextDelta(text="Testler geçiyor.")
+        yield AssistantMessage(text="Testler geçiyor.", reasoning="Önce testlere bakmalıyım.")
+
+
+async def test_thought_streams_above_the_answer_and_can_be_folded(tmp_path: Path) -> None:
+    app = make_app(ThinkingModel(), tmp_path)
+    async with app.run_test() as pilot:
+        await app.submit("kontrol et")
+        await app.wait_turn()
+        await pilot.pause()
+        thoughts = list(app.query(ThoughtBlock))
+        assert [t.source for t in thoughts] == ["Önce testlere bakmalıyım."]
+        assert not thoughts[0].collapsed
+        # Düşünce cevabın üstünde, cevaptan ayrı durur; cevap metnine karışmaz.
+        conversation = list(app.query_one("#conversation").children)
+        reply = [m for m in app.query(ChatMessage) if m.role == "Ajan"][-1]
+        assert conversation.index(thoughts[0]) < conversation.index(reply)
+        assert reply.source == "Testler geçiyor."
+
+
+async def test_thought_of_a_non_streaming_model_is_shown_with_the_reply(tmp_path: Path) -> None:
+    model = ScriptedLLM([AssistantMessage(text="Bitti.", reasoning="Kısa bir plan yaptım.")])
+    app = make_app(model, tmp_path)
+    async with app.run_test() as pilot:
+        await app.submit("yap")
+        await app.wait_turn()
+        await pilot.pause()
+        assert [t.source for t in app.query(ThoughtBlock)] == ["Kısa bir plan yaptım."]
+
+
 async def test_plan_progress_shows_in_the_flow(tmp_path: Path) -> None:
     steps = [
         {"step": "Oku", "status": "completed"},
@@ -460,7 +520,106 @@ async def test_resize_and_theme_preserve_draft_and_messages(tmp_path: Path) -> N
         await pilot.resize_terminal(60, 20)
         await pilot.press("ctrl+t")
         await pilot.pause()
-        assert app.theme == "harness-light"
+        assert app.theme == "harness-açık"  # koyu → açık; seçim kalıcı
         assert editor.text == "korunacak taslak"
         assert len(app.query(ChatMessage)) == 2
         assert editor.region.bottom <= 20
+
+
+def picker_app(tmp_path: Path) -> HarnessApp:
+    """ChatGPT'de iki model; diğer sağlayıcılar kapalı ya da bağlı değil."""
+
+    async def load_models(provider: Provider) -> list[ModelInfo]:
+        if provider.name != "chatgpt":
+            raise RuntimeError("kapalı")
+        return [
+            ModelInfo(slug="luna", display_name="Luna", efforts=[Effort(name="low")]),
+            ModelInfo(
+                slug="sol",
+                display_name="Sol",
+                efforts=[Effort(name="medium"), Effort(name="high")],
+            ),
+        ]
+
+    session = ChatSession(
+        root=tmp_path,
+        anatomy=get_preset("files"),
+        provider=get_provider("chatgpt"),
+        model="luna",
+        effort=None,
+        make_llm=lambda provider, name, effort: ScriptedLLM([]),
+        load_models=load_models,
+        load_prompt=lambda anatomy: "talimat",
+        sessions_dir=tmp_path / "logs",
+    )
+    return HarnessApp(session)
+
+
+async def test_model_window_filters_as_you_type_and_then_asks_the_effort(tmp_path: Path) -> None:
+    app = picker_app(tmp_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.submit("/model")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, PickerScreen) and screen.picker.kind == "model"
+        listing = screen.query_one(OptionList)
+        # İmleç şu anki modelde başlar (0: grup başlığı).
+        assert listing.highlighted is not None
+        assert screen.shown[listing.highlighted].value == "chatgpt/luna"  # type: ignore[union-attr]
+
+        await pilot.press(*"sol")
+        await pilot.pause()
+        assert [c.value for c in screen.shown if c] == ["chatgpt/sol"]
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app.session.model == "sol"
+        effort = app.screen
+        assert isinstance(effort, PickerScreen) and effort.picker.kind == "effort"
+        await pilot.press("down", "down", "enter")  # varsayılan → medium → high
+        await pilot.pause()
+        assert not isinstance(app.screen, PickerScreen)
+        assert app.session.label == "sol · effort: high · chatgpt"
+        assert "sol · effort: high" in str(app.query_one("#topbar", Static).render())
+
+
+async def test_escape_closes_the_window_without_changing_anything(tmp_path: Path) -> None:
+    app = picker_app(tmp_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.submit("/anatomy")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, PickerScreen)
+        # İmleç ilk satırda değil, şu anki anatomide (raw, files, ...) başlar.
+        highlighted = screen.query_one(OptionList).highlighted
+        assert highlighted is not None
+        assert screen.shown[highlighted].value == "files"  # type: ignore[union-attr]
+        await pilot.press("down", "escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, PickerScreen)
+        assert app.session.anatomy.name == "files"
+
+
+async def test_connect_asks_for_a_hidden_key_and_saves_it(tmp_path: Path) -> None:
+    app = picker_app(tmp_path)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.submit("/connect deepseek")
+        await pilot.pause()
+        screen = app.screen
+        assert isinstance(screen, KeyScreen)
+        field = screen.query_one(Input)
+        assert field.password  # yazılan ekranda görünmez
+        await pilot.press(*"ds-gizli", "enter")
+        await pilot.pause()
+        assert load_keys() == {"DEEPSEEK_API_KEY": "ds-gizli"}
+        assert all("ds-gizli" not in m.source for m in app.query(ChatMessage))
+        # Bağlanınca o sağlayıcının modelleri açılır (burada sunucu "kapalı").
+        assert isinstance(app.screen, PickerScreen)
+        await pilot.press("escape")
+
+        await app.submit("/connect openai")
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert "OPENAI_API_KEY" not in load_keys()
+        assert "Vazgeçildi" in str(app.query_one("#status", Static).render())

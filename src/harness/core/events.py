@@ -48,6 +48,14 @@ class ModelTextDelta(_Event):
     text: str
 
 
+class ModelReasoningDelta(_Event):
+    """Sağlayıcının gösterdiği düşünce metninin parçası; tamamı ModelReplied.reasoning'dedir."""
+
+    kind: Literal["model_reasoning_delta"] = "model_reasoning_delta"
+    step: int
+    text: str
+
+
 class ModelReplied(_Event):
     kind: Literal["model_replied"] = "model_replied"
     step: int
@@ -107,6 +115,21 @@ class CodeBlocksSaved(_Event):
     unnamed: int = 0  # yolu olmayan, yazılmayan bloklar
 
 
+class HarnessIntervened(_Event):
+    """Bir harness katmanı modelin akışına karıştı (ör. takılma uyarısı).
+
+    Modelin kendi kararı değildir; harness'ın payını ölçmek için her müdahale
+    ayrı kayda geçer. `layer` Anatomy'deki katmanın adıdır.
+    """
+
+    kind: Literal["harness_intervened"] = "harness_intervened"
+    step: int
+    layer: str
+    action: str  # "warn": çağrı çalıştı, sonuca not eklendi · "block": çağrı çalıştırılmadı
+    summary: str
+    call_id: str | None = None
+
+
 class TaskFinished(_Event):
     """done yalnız modelin araç istemeyi bıraktığıdır; test başarısı değildir."""
 
@@ -122,11 +145,13 @@ Event = Annotated[
     | ContextAssembled
     | ModelStarted
     | ModelTextDelta
+    | ModelReasoningDelta
     | ModelReplied
     | PermissionRequested
     | ToolStarted
     | ToolFinished
     | CodeBlocksSaved
+    | HarnessIntervened
     | TaskFinished,
     Field(discriminator="kind"),
 ]

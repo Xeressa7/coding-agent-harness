@@ -20,6 +20,8 @@ from harness.core.events import (
     CodeBlocksSaved,
     ContextAssembled,
     Event,
+    HarnessIntervened,
+    ModelReasoningDelta,
     ModelReplied,
     ModelStarted,
     ModelTextDelta,
@@ -117,6 +119,7 @@ class Turn:
     finish: TaskFinished | None = None
     steps: list[Step] = field(default_factory=lambda: [])
     code_blocks: list[CodeBlocksSaved] = field(default_factory=lambda: [])
+    interventions: list[HarnessIntervened] = field(default_factory=lambda: [])
 
     @property
     def tools(self) -> list[ToolSpan]:
@@ -181,6 +184,8 @@ def build_turns(events: list[Event]) -> list[Turn]:
                 current_turn().steps[-1].context_messages = pending_context.get(step)
             case ModelTextDelta(step=step, text=text):
                 current_step(step).partial_text += text
+            case ModelReasoningDelta():
+                pass  # tamamı ModelReplied.reasoning ile gelir; yarım kalanı ham kayıttadır
             case ModelReplied():
                 step = current_step(event.step)
                 step.replied = True
@@ -209,6 +214,8 @@ def build_turns(events: list[Event]) -> list[Turn]:
                     wait.end, wait.allowed = at(event), False
             case CodeBlocksSaved():
                 current_turn().code_blocks.append(event)
+            case HarnessIntervened():
+                current_turn().interventions.append(event)
             case TaskFinished():
                 current_turn().finish = event
     for turn in turns:

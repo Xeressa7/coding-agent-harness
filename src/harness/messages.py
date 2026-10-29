@@ -75,6 +75,15 @@ class TextDelta(_Record):
     text: str
 
 
+class ReasoningDelta(_Record):
+    """Sağlayıcının gösterdiği düşünce metninin parçası (özet ya da açık düşünce).
+
+    Cevap metni değildir; tamamı yine `AssistantMessage.reasoning`'de gelir.
+    """
+
+    text: str
+
+
 class AssistantMessage(_Record):
     """Modelin cevabı: metin, araç istekleri ya da ikisi birden.
 

@@ -11,17 +11,18 @@ gönderilemez, `instructions` alanına yazılır; cevap ancak
 """
 
 import json
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import aclosing
 from time import perf_counter
 from typing import Any, Protocol
 
 import httpx
 
-from harness.llm.base import Effort, LLMError, ModelInfo
+from harness.llm.base import Effort, LLMError, ModelInfo, error_message
 from harness.messages import (
     AssistantMessage,
     Message,
+    ReasoningDelta,
     SystemMessage,
     TextDelta,
     TokenUsage,
@@ -60,11 +61,18 @@ class ResponsesLLM:
         model: str,
         http: httpx.AsyncClient,
         effort: str | None = None,
+        *,
+        base_url: str = API_URL,
+        headers: Mapping[str, str] | None = None,
+        namespace: str | None = TOOL_NAMESPACE,
     ) -> None:
         self._tokens = tokens
         self._model = model
         self._http = http
         self._effort = effort
+        self._base_url = base_url.rstrip("/")
+        self._extra_headers = dict(headers or {})
+        self._namespace = namespace  # None: araçlar düz liste (ChatGPT planı dışı)
 
     async def complete(
         self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
@@ -77,24 +85,34 @@ class ResponsesLLM:
 
     async def stream(
         self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
-    ) -> AsyncGenerator[TextDelta | AssistantMessage, None]:
+    ) -> AsyncGenerator[TextDelta | ReasoningDelta | AssistantMessage, None]:
         started = perf_counter()
         first_text_seconds: float | None = None
-        body = build_request(self._model, history, tools, self._effort)
-        headers = {"Authorization": f"Bearer {await self._tokens.access_token()}"}
+        body = build_request(self._model, history, tools, self._effort, self._namespace)
+        headers = {
+            **self._extra_headers,
+            "Authorization": f"Bearer {await self._tokens.access_token()}",
+        }
         async with self._http.stream(
-            "POST", f"{API_URL}/responses", json=body, headers=headers
+            "POST", f"{self._base_url}/responses", json=body, headers=headers
         ) as response:
             if response.status_code != 200:
                 await response.aread()
-                raise ResponsesError(f"HTTP {response.status_code}: {response.text[:500]}")
+                raise _http_error(response)
             # store: false iken response.completed'ın `output`'u boş gelir (2026-10-13
             # gözlemi); cevabın parçaları akış sırasında output_item.done ile gelir.
             items: list[dict[str, Any]] = []
+            summary_part: tuple[object, object] | None = None
             async for event in _events(response):
                 kind = event.get("type")
                 if kind == "response.output_item.done":
                     items.append(event["item"])
+                if kind == "response.reasoning_summary_text.delta" and event.get("delta"):
+                    # Özet birkaç paragraf (part) olarak gelir; tamamında da "\n\n" ile birleşir.
+                    part = (event.get("item_id"), event.get("summary_index"))
+                    gap = "\n\n" if summary_part is not None and part != summary_part else ""
+                    summary_part = part
+                    yield ReasoningDelta(text=gap + event["delta"])
                 if kind == "response.output_text.delta" and event.get("delta"):
                     if first_text_seconds is None:
                         first_text_seconds = perf_counter() - started
@@ -138,8 +156,13 @@ def build_request(
     history: Sequence[Message],
     tools: Sequence[ToolSpec] = (),
     effort: str | None = None,
+    namespace: str | None = TOOL_NAMESPACE,
 ) -> dict[str, Any]:
-    """messages.py geçmişini Responses API istek gövdesine çevirir."""
+    """messages.py geçmişini Responses API istek gövdesine çevirir.
+
+    ChatGPT planı araçları bir `namespace` içinde ister; düz Responses API'sinde
+    (ör. OpenCode üzerinden) `namespace=None` ile araçlar düz liste olarak gider.
+    """
     instructions: list[str] = []
     items: list[dict[str, Any]] = []
     for message in history:
@@ -152,15 +175,13 @@ def build_request(
                 if message.text:
                     items.append({"role": "assistant", "content": message.text})
                 for call in message.tool_calls:
-                    items.append(
-                        {
-                            "type": "function_call",
-                            "call_id": call.id,
-                            "namespace": TOOL_NAMESPACE,
-                            "name": call.name,
-                            "arguments": call.arguments,
-                        }
-                    )
+                    item = {
+                        "type": "function_call",
+                        "call_id": call.id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                    }
+                    items.append({**item, "namespace": namespace} if namespace else item)
             case ToolResult():
                 items.append(
                     {
@@ -176,22 +197,27 @@ def build_request(
     # modelin neden o aracı çağırdığı buradan görünür). Effort verilmezse modelin varsayılanı.
     body["reasoning"] = {"summary": "auto", **({"effort": effort} if effort else {})}
     if tools:
-        body["tools"] = [
+        functions = [
             {
-                "type": "namespace",
-                "name": TOOL_NAMESPACE,
-                "description": "Harness'in çalışma dizini üzerinde kullanılan araçları",
-                "tools": [
-                    {
-                        "type": "function",
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": tool.parameters,
-                    }
-                    for tool in tools
-                ],
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
             }
+            for tool in tools
         ]
+        body["tools"] = (
+            [
+                {
+                    "type": "namespace",
+                    "name": namespace,
+                    "description": "Harness'in çalışma dizini üzerinde kullanılan araçları",
+                    "tools": functions,
+                }
+            ]
+            if namespace
+            else functions
+        )
     return body
 
 
@@ -231,12 +257,21 @@ async def _events(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
             yield json.loads(data)
 
 
+def _http_error(response: httpx.Response) -> ResponsesError:
+    try:
+        body: object = response.json()
+    except ValueError:
+        body = None
+    detail = error_message(body) or response.text[:500]
+    return ResponsesError(f"HTTP {response.status_code}: {detail}")
+
+
 async def list_models(tokens: TokenSource, http: httpx.AsyncClient) -> list[ModelInfo]:
     """Giriş yapan hesabın kullanabildiği modeller, OpenAI'ın verdiği sırayla."""
     headers = {"Authorization": f"Bearer {await tokens.access_token()}"}
     response = await http.get(f"{API_URL}/models", headers=headers)
     if response.status_code != 200:
-        raise ResponsesError(f"HTTP {response.status_code}: {response.text[:500]}")
+        raise _http_error(response)
     payload: dict[str, Any] = response.json()
     entries: list[dict[str, Any]] = payload.get("data") or payload.get("models") or []
     return [_model_info(entry) for entry in entries if entry.get("visibility", "list") == "list"]

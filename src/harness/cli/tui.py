@@ -1,4 +1,4 @@
-"""Tam ekran terminal ön yüzü: sohbet, bağımsız akış ve sabit mesaj editörü."""
+"""Tam ekran terminal ön yüzü: sohbet, bağımsız akış, sabit editör ve seçim pencereleri."""
 
 import asyncio
 from collections.abc import Callable
@@ -14,19 +14,35 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.theme import Theme
-from textual.widgets import Button, Markdown, Static, TextArea
+from textual.widgets import Button, Collapsible, Input, Markdown, OptionList, Static, TextArea
 from textual.widgets.markdown import MarkdownStream
+from textual.widgets.option_list import Option
 from textual.worker import Worker, WorkerCancelled
 
-from harness.cli.commands import ChatSession, CommandReply, is_command
-from harness.cli.inspector import code_blocks_summary, seconds, summary_items, write_report
+from harness.cli.commands import (
+    ChatSession,
+    Choice,
+    CommandReply,
+    KeyRequest,
+    Picker,
+    is_command,
+)
+from harness.cli.inspector import (
+    code_blocks_summary,
+    intervention_summary,
+    seconds,
+    summary_items,
+    write_report,
+)
 from harness.cli.render import PermissionChoice, live_outcome, plan_lines
+from harness.cli.themes import available, textual_theme
 from harness.core.agent import Agent
 from harness.core.events import (
     CodeBlocksSaved,
     ContextAssembled,
     Event,
+    HarnessIntervened,
+    ModelReasoningDelta,
     ModelReplied,
     ModelStarted,
     ModelTextDelta,
@@ -42,7 +58,6 @@ from harness.messages import ToolCall
 # İş sürerken de çalışabilen, yalnız bilgi veren komutlar.
 READ_ONLY_COMMANDS = {
     "/help",
-    "/sessions",
     "/inspect",
     "/exit",
     "/quit",
@@ -50,6 +65,8 @@ READ_ONLY_COMMANDS = {
     "/tools",
     "/usage",
     "/cost",
+    "/watch",  # panel kaydı okur; koşu sürerken açmak asıl kullanımıdır
+    "/theme",
 }
 
 
@@ -107,6 +124,22 @@ class ChatMessage(Vertical):
         await self.close_stream()
 
 
+class ThoughtBlock(Collapsible):
+    """Sağlayıcının gösterdiği düşünce (özet ya da açık düşünce); cevabın üstünde, soluk.
+
+    Açık başlar ki model düşünürken ne yaptığı görülsün; başlığa tıklayınca katlanır.
+    """
+
+    def __init__(self, text: str = "") -> None:
+        self.source = text
+        self._body = Static(Text(text), classes="thought-text")
+        super().__init__(self._body, title="Düşünce", collapsed=False, classes="thought")
+
+    def append(self, text: str) -> None:
+        self.source += text
+        self._body.update(Text(self.source))
+
+
 class PermissionDialog(ModalScreen[PermissionChoice]):
     """İzin katmanının "sor" dediği araç çağrısını gösterir; sonuç izin ver/reddet/oturum boyu."""
 
@@ -137,6 +170,103 @@ class PermissionDialog(ModalScreen[PermissionChoice]):
                 self.dismiss("deny")
 
 
+class PickerScreen(ModalScreen[Choice | None]):
+    """Aranabilir seçim listesi: yazdıkça süzülür, ↑/↓ gezer, Enter seçer, Esc vazgeçer."""
+
+    def __init__(self, picker: Picker) -> None:
+        super().__init__()
+        self.picker = picker
+        self.shown: list[Choice | None] = []  # listedeki sıraya göre satır; None = grup başlığı
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Static(Text(self.picker.title), classes="dialog-title")
+            yield Input(placeholder="Ara…", id="picker-search")
+            yield OptionList(id="picker-options")
+            yield Static("↑↓ gez · Enter seç · Esc vazgeç", classes="dialog-keys")
+
+    def on_mount(self) -> None:
+        self.refill("")
+        self.query_one(Input).focus()
+
+    def refill(self, query: str) -> None:
+        words = query.casefold().split()
+        options: list[Option] = []
+        self.shown = []
+        group = ""
+        current: int | None = None
+        for choice in self.picker.choices:
+            haystack = f"{choice.group} {choice.label} {choice.detail}".casefold()
+            if not all(word in haystack for word in words):
+                continue
+            if choice.group and choice.group != group:
+                group = choice.group
+                options.append(Option(Text(group, style="bold"), disabled=True))
+                self.shown.append(None)
+            line = Text(("● " if choice.current else "  ") + choice.label)
+            if choice.detail:
+                line.append(f"  {choice.detail}", style="dim")
+            if choice.current and current is None:
+                current = len(options)
+            options.append(Option(line, disabled=not choice.enabled))
+            self.shown.append(choice)
+        listing = self.query_one(OptionList)
+        listing.clear_options()
+        listing.add_options(options)
+        selectable = [i for i, c in enumerate(self.shown) if c is not None and c.enabled]
+        if selectable:
+            # Arama yokken imleç şu anki seçimde; arama varsa ilk eşleşmede.
+            listing.highlighted = current if current in selectable and not words else selectable[0]
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self.refill(event.value)
+
+    def on_key(self, event: events.Key) -> None:
+        # Odak arama kutusundayken de ok tuşları listeyi gezer.
+        listing = self.query_one(OptionList)
+        if event.key == "down":
+            listing.action_cursor_down()
+            event.stop()
+        elif event.key == "up":
+            listing.action_cursor_up()
+            event.stop()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.select(self.query_one(OptionList).highlighted)
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        event.stop()
+        self.select(event.option_index)
+
+    def select(self, index: int | None) -> None:
+        choice = self.shown[index] if index is not None and index < len(self.shown) else None
+        if choice is not None and choice.enabled:
+            self.dismiss(choice)
+
+
+class KeyScreen(ModalScreen[str | None]):
+    """API anahtarı için gizli alan; yazılan ekranda görünmez."""
+
+    def __init__(self, request: KeyRequest) -> None:
+        super().__init__()
+        self.request = request
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Static(Text(f"{self.request.provider} bağla"), classes="dialog-title")
+            yield Static(Text(self.request.prompt), classes="dialog-text")
+            yield Input(placeholder="API anahtarı", password=True, id="key-input")
+            yield Static("Enter kaydet · Esc vazgeç", classes="dialog-keys")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(event.value.strip() or None)
+
+
 class HarnessApp(App[None]):
     TITLE = "Harness"
     CSS_PATH = "tui.tcss"
@@ -165,39 +295,13 @@ class HarnessApp(App[None]):
         self.report: Path | None = None
         self._turn: Worker[None] | None = None
         self._reply: ChatMessage | None = None
+        self._thought: ThoughtBlock | None = None
         self._turn_number = 0
         self._active_question: str | None = None
         self._active_events: list[Event] = []
-        self.register_theme(
-            Theme(
-                name="harness-dark",
-                # Minimal Clarity OKLCH tokenlarının terminal için sRGB karşılıkları.
-                primary="#6895f4",
-                secondary="#6895f4",
-                accent="#6895f4",
-                foreground="#ebeff5",
-                background="#0f1216",
-                surface="#171b20",
-                panel="#171b20",
-                variables={"text-muted": "#9199a5", "border": "#2a2e34"},
-                dark=True,
-            )
-        )
-        self.register_theme(
-            Theme(
-                name="harness-light",
-                primary="#436ed1",
-                secondary="#436ed1",
-                accent="#4874d8",
-                foreground="#11161f",
-                background="#fcfcfc",
-                surface="#f8f8fa",
-                panel="#f8f8fa",
-                variables={"text-muted": "#6b727e", "border": "#e3e5e7"},
-                dark=False,
-            )
-        )
-        self.theme = "harness-dark"
+        for palette in available().values():
+            self.register_theme(textual_theme(palette))
+        self.theme = f"harness-{session.theme}"
 
     # Model, ajan ve kayıt /komutlarla değişebilir; her seferinde oturumdan okunur.
     @property
@@ -233,7 +337,7 @@ class HarnessApp(App[None]):
                             "Mesajını aşağıya yaz. Yanıtlar burada akar; "
                             "işlem durumu sağda kalır.\n"
                             "Yukarı kaydırdığında okuduğun yer korunur.\n"
-                            "/help: sağlayıcı, model, effort, anatomi ve oturum komutları."
+                            "/model: model seç · /connect: sağlayıcı bağla · /help: komutlar"
                         ),
                         id="welcome",
                     )
@@ -350,7 +454,46 @@ class HarnessApp(App[None]):
         if reply.inspect:
             self.action_inspect()
             return
+        await self.handle_reply(reply)
+
+    async def handle_reply(self, reply: CommandReply) -> None:
+        """Cevabı gösterir; sıradaki adım varsa (liste, anahtar, giriş) onu açar."""
+        if reply.theme is not None:
+            self.theme = f"harness-{reply.theme}"
         await self.show_reply(reply)
+        if reply.picker is not None:
+            picker = reply.picker
+
+            async def picked(choice: Choice | None) -> None:
+                if choice is not None:
+                    kind = choice.kind or picker.kind
+                    await self.handle_reply(await self.session.choose(kind, choice.value))
+
+            await self.push_screen(PickerScreen(picker), picked)
+        elif reply.key is not None:
+            request = reply.key
+
+            async def entered(key: str | None) -> None:
+                if key is None:
+                    self.set_status("Vazgeçildi · anahtar kaydedilmedi")
+                else:
+                    await self.handle_reply(await self.session.save_key(request.provider, key))
+
+            await self.push_screen(KeyScreen(request), entered)
+        elif reply.login:
+            self.set_status("Tarayıcıda ChatGPT girişi bekleniyor…")
+            self.run_worker(self.login(), group="login", exclusive=True, exit_on_error=False)
+
+    async def login(self) -> None:
+        def show_url(url: str) -> None:
+            text = f"Tarayıcı açılamadı; bu adresi tarayıcıya yapıştır:\n\n{url}"
+            message = ChatMessage("Harness", text, kind="command")
+            try:  # giriş ayrı iş parçacığında bekler
+                self.call_from_thread(self.query_one("#conversation").mount, message)
+            except RuntimeError:
+                self.query_one("#conversation").mount(message)
+
+        await self.handle_reply(await self.session.login(show_url))
 
     async def show_reply(self, reply: CommandReply) -> None:
         if reply.reset:
@@ -399,6 +542,7 @@ class HarnessApp(App[None]):
                             await self.add_flow(f"TUR {self._turn_number}")
                         case ModelStarted(step=step):
                             self._reply = None
+                            self._thought = None
                             self.set_status("Model bekleniyor…")
                             await self.add_flow(f"● Model · adım {step}")
                         case ModelTextDelta(text=text):
@@ -409,7 +553,23 @@ class HarnessApp(App[None]):
                                 )
                             self.set_status("Yanıt geliyor…")
                             await self._reply.append_delta(text)
-                        case ModelReplied(text=text, duration_seconds=duration):
+                        case ModelReasoningDelta(text=text):
+                            if self._thought is None:
+                                self._thought = ThoughtBlock()
+                                await self.query_one("#conversation", VerticalScroll).mount(
+                                    self._thought, before=self._reply
+                                )
+                            self.set_status("Düşünüyor…")
+                            self._thought.append(text)
+                        case ModelReplied(
+                            text=text, duration_seconds=duration, reasoning=reasoning
+                        ):
+                            if self._thought is None and reasoning:
+                                # Akış vermeyen adaptör: özet tamamlanmış yanıtla gelir.
+                                await self.query_one("#conversation", VerticalScroll).mount(
+                                    ThoughtBlock(reasoning), before=self._reply
+                                )
+                            self._thought = None
                             if self._reply is None and text:
                                 self._reply = ChatMessage("Ajan")
                                 await self.query_one("#conversation", VerticalScroll).mount(
@@ -441,6 +601,8 @@ class HarnessApp(App[None]):
                                 await self.add_flow("PLAN\n" + "\n".join(plan_lines(details)))
                         case CodeBlocksSaved():
                             await self.add_flow(f"✓ {code_blocks_summary(event)}")
+                        case HarnessIntervened():
+                            await self.add_flow(f"⚑ harness · {intervention_summary(event)}")
                         case TaskFinished(reason=reason):
                             finished = True
                             if reason in {"cancelled", "error"}:
@@ -521,6 +683,9 @@ class HarnessApp(App[None]):
                 await self._turn.wait()
 
     async def action_stop(self) -> None:
+        if isinstance(self.screen, (PickerScreen, KeyScreen)):
+            self.screen.dismiss(None)
+            return
         if self.busy and self._turn is not None:
             self._turn.cancel()
             await self.wait_turn()
@@ -563,7 +728,7 @@ class HarnessApp(App[None]):
         self.page_target().scroll_page_down(animate=False)
 
     def action_toggle_theme(self) -> None:
-        self.theme = "harness-light" if self.theme == "harness-dark" else "harness-dark"
+        self.theme = f"harness-{self.session.cycle_theme()}"
 
     def action_inspect(self) -> None:
         if self.report is not None:
