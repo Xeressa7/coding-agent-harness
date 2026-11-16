@@ -26,9 +26,11 @@ def test_interactive_chat_routes_to_tui(tmp_path: Path, monkeypatch: pytest.Monk
     )
     calls: list[tuple[str, str, bool]] = []
 
-    def launch(make_session: Callable[[object], ChatSession], *, resume: bool = False) -> Path:
+    def launch(
+        make_session: Callable[[object], ChatSession], *, resume: bool = False, pick: bool = False
+    ) -> Path:
         session = make_session(object())
-        calls.append((session.model, session.anatomy.name, resume))
+        calls.append((session.model, session.anatomy.name, resume or pick))
         assert session.root == tmp_path and session.system_prompt
         return session.log.path
 
@@ -39,7 +41,10 @@ def test_interactive_chat_routes_to_tui(tmp_path: Path, monkeypatch: pytest.Monk
     # Standart biçim: komutsuz `harness` sohbet açar, -c son oturuma devam eder.
     result = runner.invoke(cli.app, ["-m", "m2", "-c"])
     assert result.exit_code == 0, result.output
-    assert calls == [("test-model", "raw", False), ("m2", "bash", True)]
+    result = runner.invoke(cli.app, ["-r"])  # açılışta oturum seçici
+    assert result.exit_code == 0, result.output
+    assert calls[:2] == [("test-model", "raw", False), ("m2", "bash", True)]
+    assert calls[2][2]
 
 
 def test_plain_bypasses_fullscreen_even_in_interactive_terminal(

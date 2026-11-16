@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 
 from harness.cli import app as cli
-from harness.cli.commands import ChatSession, is_command, usage_text
+from harness.cli.commands import ChatSession, is_command, matching_commands, usage_text
 from harness.core.anatomy import get_preset
 from harness.core.config import project_sessions_dir
 from harness.core.events import (
@@ -222,10 +222,10 @@ async def test_resume_continues_an_old_session_in_its_own_log(tmp_path: Path) ->
     await turn(session, "yeni görev")
     os.utime(old_log, (1, 1))  # eski oturum gerçekten daha eski
 
-    listing = (await session.run("/sessions")).picker  # takma ad: /resume
+    listing = (await session.run("/resume")).picker
     assert listing is not None and listing.kind == "resume"
-    details = [c.detail for c in listing.choices]
-    assert "yeni görev" in details[0] and "eski görev" in details[1]
+    labels = [c.label for c in listing.choices]
+    assert labels == ["yeni görev", "eski görev"]  # satır = görev (aranır), en yeni önce
     assert [c.current for c in listing.choices] == [True, False]
 
     reply = await session.run("/resume 2")
@@ -384,3 +384,68 @@ def test_usage_shows_the_cache_share_and_harness_interventions() -> None:
     # Bir çağrı sayım vermediyse yüzde uydurulmaz.
     partial = usage_text([TaskStarted(task="t"), reply(1, None), reply(2, 750)])
     assert "en az 750 |" in partial and "%" not in partial
+
+
+async def test_info_commands_open_a_panel_and_confirmations_are_notes(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    for name in ("/help", "/status", "/tools", "/usage"):
+        reply = await session.run(name)
+        assert reply.view == "panel" and reply.title, name
+    assert (await session.run("/new")).view == "note"
+    palette = (await session.run("/")).picker
+    assert palette is not None and palette.kind == "command"
+    offered = {c.value for c in palette.choices}
+    assert {"/sessions", "/diff", "/copy", "/export", "/memory"} <= offered
+    assert (await session.choose("command", "/status")).view == "panel"
+    assert [c.name for c in matching_commands("/se")] == ["/sessions"]
+    assert "/exit" in [c.name for c in matching_commands("/q")]  # takma ad da önerilir
+
+
+async def test_sessions_browser_offers_continue_panel_and_export(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    await turn(session, "indirim hatası")
+    await session.run("/new")
+    await asyncio.sleep(0.01)
+    await turn(session, "kdv raporu")
+    await turn(session, "kdv raporunu kısalt")
+
+    listing = (await session.run("/sessions")).picker
+    assert listing is not None and listing.kind == "sessions"
+    newest = listing.choices[0]
+    assert newest.label == "kdv raporu" and newest.group == "Bugün"
+    assert "2 tur" in newest.detail and "son: kdv raporunu kısalt" in newest.detail
+
+    actions = (await session.choose("sessions", "2")).picker
+    assert actions is not None and [c.label for c in actions.choices] == [
+        "Devam et",
+        "Panelde aç",
+        "Dışa aktar",
+    ]
+    exported = await session.choose("session", actions.choices[2].value)
+    target = Path(exported.text.split("`")[1])
+    text = target.read_text(encoding="utf-8")
+    assert "## Sen" in text and "indirim hatası" in text
+    resumed = await session.choose("session", actions.choices[0].value)
+    assert resumed.reset and resumed.transcript[0] == ("Sen", "indirim hatası")
+
+    found = await session.run("/resume kdv")  # tek eşleşme: doğrudan devam
+    assert found.reset and found.transcript[0] == ("Sen", "kdv raporu")
+    assert "geçen oturum yok" in (await session.run("/resume uçak")).text
+
+
+async def test_copy_export_memory_and_diff(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    assert (await session.run("/copy")).clipboard is None
+    await turn(session, "selam")
+    copied = await session.run("/copy")
+    assert copied.clipboard == "luna/None"  # EchoModel'in cevabı
+    exported = await session.run("/export notlar/oturum.md")
+    assert (tmp_path / "notlar" / "oturum.md").read_text(encoding="utf-8").count("## Sen") == 1
+    assert "notlar" in exported.text
+
+    on = await session.run("/memory")
+    assert session.anatomy.memory and "context.yaml" in on.text  # neden çalışmayacağını söyler
+    off = await session.run("/memory")
+    assert not session.anatomy.memory and off.text.startswith("Hafıza kapandı")
+
+    assert "git deposu değil" in (await session.run("/diff")).text

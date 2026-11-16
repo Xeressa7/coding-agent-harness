@@ -169,87 +169,60 @@
     .lg-row { grid-template-columns: 50px minmax(0, 1fr) 56px; }
     .lg-c.res { display: none; }
   }
-  /* ---- gezinti haritası ---- */
-  .map-view { display: flex; flex-direction: column; height: calc(100vh - 50px); min-width: 0; }
-  .map-view:focus { outline: none; }
-  .map-top { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 8px 16px;
-             border-bottom: 1px solid var(--border); font-size: 12px; color: var(--muted); }
-  .map-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; }
-  .legend-item { display: inline-flex; align-items: center; gap: 5px; }
-  .map-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 320px; min-height: 0; }
-  .map-canvas { position: relative; overflow: auto; }
-  .map-arcs { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
-  .map-rows { position: relative; min-width: 520px; }
-  .map-row { position: absolute; left: 0; right: 0; height: 26px; display: flex; align-items: center; gap: 6px;
-             white-space: nowrap; cursor: pointer; font-size: 13px; padding-right: 10px; }
-  .map-row:hover { background: var(--surface-2); }
-  .map-row.current { background: color-mix(in srgb, var(--accent) 16%, transparent); }
-  .map-row.selected { box-shadow: inset 0 0 0 1px var(--accent); }
-  .map-row.t-section { cursor: default; padding-left: 12px; }
-  .map-row.t-section:hover { background: none; }
-  .section { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-  .twisty { width: 14px; flex: none; border: 0; background: none; color: var(--muted); padding: 0; font: inherit; cursor: pointer; }
-  .name { overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 46ch; }
-  .t-action .name { max-width: 60ch; }
-  .name.cold { color: var(--muted); opacity: .55; }
-  .name.deleted { text-decoration: line-through; }
+  /* ---- ortak işaretler (defter ve dosyalar) ---- */
   .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); display: inline-block; }
-  .dot.cold { background: transparent; box-shadow: inset 0 0 0 1px var(--border); }
   .k-read { background: var(--accent); } .k-edit { background: var(--warn); } .k-write { background: var(--ok); }
   .k-delete { background: var(--err); } .k-search, .k-hit { background: var(--harness); }
   .k-list { background: color-mix(in srgb, var(--accent) 45%, var(--muted)); }
   .k-bash, .k-net { background: var(--text); } .k-plan, .k-other, .k-none { background: var(--muted); }
-  .k-prompt, .k-system { background: var(--ok); }
-  .visits { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .visits .err { color: var(--err); font-weight: 600; }
-  .visits.hit { color: var(--harness); }
-  .strip { position: relative; width: 140px; height: 8px; background: var(--surface-2); border-radius: 3px;
-           flex: none; overflow: hidden; margin-left: auto; }
-  .strip .range { position: absolute; top: 0; bottom: 0; background: var(--accent); opacity: .38; }
-  .strip .edit-tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--warn); }
-  .arc { fill: none; stroke: var(--accent); stroke-width: 1.5; }
-  .arc.old { opacity: .16; } .arc.recent { opacity: .55; } .arc.now { stroke-width: 2.5; opacity: 1; }
-  .arc.hitline { stroke: var(--harness); stroke-dasharray: 3 3; opacity: .85; }
-  .arrow-head { fill: var(--accent); }
-  .map-imports { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
-  .imp { fill: none; stroke: var(--ok); stroke-width: 1.4; opacity: .75; }
-  .imp.in { stroke-dasharray: 4 3; }
-  .k-import { background: var(--ok); }
-  .imp-badge { font-size: 11px; color: var(--ok); white-space: nowrap; }
-  .meta.ok { color: var(--ok); }
-  .map-side { border-left: 1px solid var(--border); padding: 12px 14px; overflow: auto; font-size: 13px; }
-  .map-side h3 { font-size: 14px; margin: 6px 0; overflow-wrap: anywhere; }
-  .map-side h4 { font-size: 12px; margin: 14px 0 4px; color: var(--accent); }
-  .meta.err { color: var(--err); }
+  .meta.ok { color: var(--ok); } .meta.err { color: var(--err); }
   .linklike { border: 0; background: none; color: var(--accent); padding: 0; font: inherit; cursor: pointer; }
-  .visit-item { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--text);
-                padding: 3px 4px; border-radius: 4px; font: 12px/1.4 var(--mono); cursor: pointer; }
-  .visit-item:hover { background: var(--surface-2); }
-  .map-bar { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--border);
-             background: var(--surface); }
-  .btn { border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 6px;
-         padding: 3px 9px; font: inherit; cursor: pointer; }
-  .live-btn.on { color: var(--ok); border-color: var(--ok); }
-  .map-track { position: relative; flex: 1; height: 28px; min-width: 120px; }
-  .map-marks { position: absolute; inset: 0; pointer-events: none; }
-  .map-marks i { position: absolute; display: block; }
-  .seg { top: 10px; height: 8px; background: var(--surface-2); border-radius: 2px; }
-  .tick { top: 7px; width: 2px; height: 14px; }
-  .mark { top: 0; width: 2px; height: 28px; }
-  .m-error { background: var(--err); } .m-harness { background: var(--harness); }
-  .m-turn { background: var(--text); opacity: .5; } .m-done { background: var(--ok); } .m-stop { background: var(--warn); }
-  .map-slider { position: absolute; inset: 0; width: 100%; margin: 0; background: transparent;
-                -webkit-appearance: none; appearance: none; }
-  .map-slider::-webkit-slider-runnable-track { height: 28px; background: transparent; }
-  .map-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 3px; height: 28px; background: var(--accent); }
-  .map-slider::-moz-range-thumb { width: 3px; height: 28px; background: var(--accent); border: 0; border-radius: 0; }
-  .map-time { font: 12px var(--mono); color: var(--muted); white-space: nowrap; }
-  @media (max-width: 760px) {
-    .map-view { height: auto; }
-    .map-body { grid-template-columns: minmax(0, 1fr); }
-    .map-canvas { height: 60vh; }
-    .map-side { border-left: 0; border-top: 1px solid var(--border); }
-    .map-bar { flex-wrap: wrap; }
+  /* ---- dosyalar görünümü (watch_files.js) ---- */
+  .fl-view { display: flex; flex-direction: column; height: calc(100vh - 50px); min-width: 0; }
+  .fl-head { padding: 12px 16px 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .fl-sentence { font-size: 14px; margin-bottom: 6px; }
+  .fl-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); align-items: center; }
+  .fl-key { display: inline-flex; align-items: center; gap: 4px; }
+  .fl-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 32%); min-height: 0; }
+  .fl-grid { display: grid; align-content: start; overflow: auto; padding: 8px 16px 24px; row-gap: 2px; }
+  .fl-corner { font-size: 11px; color: var(--muted); padding: 4px 6px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
+  .fl-step { font: 11px var(--mono); color: var(--muted); text-align: center; padding: 4px 0; position: sticky; top: 0;
+             background: var(--bg); z-index: 1; cursor: help; }
+  .fl-step.turn { border-left: 2px solid var(--border); }
+  .fl-lane { font-size: 12px; color: var(--muted); padding: 3px 6px; font-style: italic; }
+  .fl-file { font-size: 13px; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; border-radius: 4px; }
+  .fl-file:hover { background: var(--surface-2); }
+  .fl-file.changed .fl-name { color: var(--warn); font-weight: 600; }
+  .fl-dir { color: var(--muted); }
+  .fl-cell { border: 0; background: var(--surface-2); border-radius: 4px; height: 24px; padding: 0; cursor: pointer;
+             display: flex; align-items: center; justify-content: center; }
+  .fl-cell:hover { outline: 1px solid var(--accent); }
+  .fl-cell.sel { outline: 2px solid var(--text); }
+  .fl-empty { height: 24px; border-radius: 4px; background: color-mix(in srgb, var(--surface-2) 40%, transparent); }
+  .fl-marks { display: inline-flex; gap: 1px; }
+  .fl-mark { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 16px; padding: 0 2px;
+             border-radius: 3px; font: 700 11px var(--mono); color: var(--bg); }
+  .fl-mark.k-hit { background: transparent; color: var(--harness); font-size: 16px; }
+  .fl-mark.k-search { background: var(--harness); }
+  .fl-mark.failed { background: transparent; color: var(--err); outline: 1px solid var(--err); }
+  .fl-sum { font-size: 11px; color: var(--muted); padding: 3px 8px; display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+  .fl-mark sup { font-size: 8px; margin-left: 1px; }
+  .fl-count { display: inline-flex; align-items: center; gap: 2px; }
+  .fl-cover { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .fl-cover i { display: block; height: 100%; background: var(--accent); }
+  .fl-side { border-left: 1px solid var(--border); overflow: auto; padding: 12px 14px; font-size: 13px; background: var(--surface); }
+  .fl-side h3 { font-size: 14px; margin: 0 0 8px; overflow-wrap: anywhere; }
+  .fl-side p { color: var(--muted); margin: 0 0 10px; }
+  .fl-label { font-size: 12px; color: var(--accent); margin: 10px 0 4px; overflow-wrap: anywhere; }
+  .fl-reason { color: var(--text) !important; font-style: italic; }
+  .fl-rec { border-top: 1px solid var(--border); padding-top: 6px; margin-top: 8px; }
+  .fl-visit { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--text); padding: 4px; border-radius: 4px; font: inherit; cursor: pointer; }
+  .fl-visit:hover { background: var(--surface-2); }
+  @media (max-width: 900px) {
+    .fl-view { height: auto; }
+    .fl-body { grid-template-columns: minmax(0, 1fr); }
+    .fl-grid { max-height: 60vh; }
+    .fl-side { border-left: 0; border-top: 1px solid var(--border); }
   }
   @media (max-width: 760px) {
     .layout { grid-template-columns: minmax(0, 1fr); }
@@ -261,7 +234,7 @@
 <body>
 <header>
   <h1><span class="dot" id="dot"></span>Harness canlı panel</h1>
-  <nav class="tabs"><button id="tab-flow" class="on">Akış</button><button id="tab-map">Harita</button></nav>
+  <nav class="tabs"><button id="tab-flow" class="on">Akış</button><button id="tab-files">Dosyalar</button></nav>
   <div class="stats" id="stats"></div>
 </header>
 <div class="layout">
@@ -270,10 +243,10 @@
     <div id="logs"></div>
   </aside>
   <section id="flowview" class="lg-view"></section>
-  <section id="mapview" class="map-view" hidden></section>
+  <section id="filesview" class="fl-view" hidden></section>
 </div>
-<script src="/map.js"></script>
 <script src="/ledger.js"></script>
+<script src="/files.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -285,22 +258,25 @@ const el = (tag, cls, text) => {
 };
 
 let source = null, current = null, logs = [];
-const map = window.HarnessMap.create(document.getElementById("mapview"));
 const flow = window.HarnessLedger.create(document.getElementById("flowview"), $("stats"));
+// Dosyalar görünümünde bir kayda "Akış'ta aç" denince defter o satırı seçer.
+const filesView = window.HarnessFiles.create(document.getElementById("filesview"), {
+  onOpenRecord: (id) => { showView("flow"); flow.focus(id); },
+});
 
 function showView(view) {
-  const onMap = view === "map";
-  $("flowview").hidden = onMap; $("mapview").hidden = !onMap;
-  $("tab-flow").classList.toggle("on", !onMap); $("tab-map").classList.toggle("on", onMap);
-  const url = new URL(location.href); url.searchParams.set("view", view); history.replaceState(null, "", url);
-  if (onMap) { map.visible(); $("mapview").focus(); } else flow.visible();
+  const onFiles = view === "files" || view === "map";  // eski "map" bağlantıları da açılsın
+  $("flowview").hidden = onFiles; $("filesview").hidden = !onFiles;
+  $("tab-flow").classList.toggle("on", !onFiles); $("tab-files").classList.toggle("on", onFiles);
+  const url = new URL(location.href); url.searchParams.set("view", onFiles ? "files" : "flow"); history.replaceState(null, "", url);
+  if (onFiles) filesView.visible(); else flow.visible();
 }
 $("tab-flow").onclick = () => showView("flow");
-$("tab-map").onclick = () => showView("map");
+$("tab-files").onclick = () => showView("files");
 
 function open(path) {
   if (source) source.close();
-  current = path; flow.reset(); map.reset(path); drawLogs();
+  current = path; flow.reset(); filesView.reset(); drawLogs();
   const url = new URL(location.href); url.searchParams.set("path", path); history.replaceState(null, "", url);
   source = new EventSource("/api/stream?path=" + encodeURIComponent(path));
   source.onopen = () => $("dot").classList.add("live");
@@ -309,7 +285,7 @@ function open(path) {
     let event;
     try { event = JSON.parse(m.data); } catch (err) { console.error(err); return; }
     flow.append(event);
-    map.append(event);
+    filesView.append(event);
   };
 }
 
@@ -330,7 +306,7 @@ async function refresh() {
   else drawLogs();
 }
 
-if (new URL(location.href).searchParams.get("view") === "map") showView("map");
+if (["files", "map"].includes(new URL(location.href).searchParams.get("view"))) showView("files");
 const asked = new URL(location.href).searchParams.get("path");
 if (asked) { $("follow").checked = false; open(asked); }
 refresh();

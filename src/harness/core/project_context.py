@@ -66,7 +66,7 @@ def load_instructions(root: Path, *, drop_memory_index: bool = False) -> Instruc
     return None
 
 
-def _ctx_command() -> str | None:
+def ctx_command() -> str | None:
     return shutil.which("ctx")
 
 
@@ -97,7 +97,7 @@ class CtxMemory:
         self._session_id = session_id  # ctx aynı notu aynı oturumda ikinci kez eklemez
 
     def _command(self) -> str:
-        command = _ctx_command()
+        command = ctx_command()
         if command is None:
             raise MemoryUnavailable("ctx bulunamadı (agent-context kurulu değil)")
         if not (self._root / "context.yaml").is_file():

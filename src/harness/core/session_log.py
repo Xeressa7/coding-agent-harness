@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from pydantic import TypeAdapter
 
@@ -82,6 +83,9 @@ class SessionSummary:
     updated: datetime
     turns: int
     first_task: str
+    last_task: str = ""
+    model: str | None = None  # son turun modeli
+    anatomy: str | None = None  # son turun anatomisi
 
 
 def list_sessions(folder: Path) -> list[SessionSummary]:
@@ -89,6 +93,8 @@ def list_sessions(folder: Path) -> list[SessionSummary]:
     summaries: list[SessionSummary] = []
     for path in folder.glob("*.jsonl"):
         tasks: list[str] = []
+        model: str | None = None
+        anatomy: str | None = None
         with path.open(encoding="utf-8") as stream:
             for line in stream:
                 # Bağlam kayıtları büyük olabilir; yalnız görev satırları çözülür.
@@ -100,7 +106,13 @@ def list_sessions(folder: Path) -> list[SessionSummary]:
                     continue
                 if record.get("kind") == "task_started":
                     tasks.append(str(record.get("task", "")))
+                    model = record.get("model") or model
+                    shape: object = record.get("anatomy")
+                    if isinstance(shape, dict):
+                        anatomy = str(cast(dict[str, object], shape).get("name") or "") or None
         if tasks:
             updated = datetime.fromtimestamp(path.stat().st_mtime)
-            summaries.append(SessionSummary(path, updated, len(tasks), tasks[0]))
+            summaries.append(
+                SessionSummary(path, updated, len(tasks), tasks[0], tasks[-1], model, anatomy)
+            )
     return sorted(summaries, key=lambda s: s.updated, reverse=True)

@@ -175,6 +175,9 @@ PlainOption = Annotated[bool, typer.Option("--plain", help="Tam ekran yerine sad
 ContinueOption = Annotated[
     bool, typer.Option("--continue", "-c", help="Bu projenin son oturumuna devam et")
 ]
+PickSessionOption = Annotated[
+    bool, typer.Option("--resume", "-r", help="Açılışta geçmiş oturumlardan birini seç")
+]
 AllowOption = Annotated[
     list[str] | None,
     typer.Option("--allow", help="Sormadan çalışacak araç (tekrarlanabilir); 'all' hepsini açar"),
@@ -347,6 +350,7 @@ def root_command(
         typer.Option("--print", "-p", help="Tek görev çalıştır, yalnız cevabı yaz ve çık"),
     ] = None,
     continue_: ContinueOption = False,
+    pick_session: PickSessionOption = False,
     model: ModelOption = None,
     effort: EffortOption = None,
     anatomy_name: AnatomyOption = None,
@@ -367,7 +371,7 @@ def root_command(
     if prompt is not None:
         run_once(prompt, config, quiet=True, resume=continue_, allow=allow)
     else:
-        run_chat(config, plain=plain, resume=continue_, allow=allow)
+        run_chat(config, plain=plain, resume=continue_, allow=allow, pick=pick_session)
 
 
 def run_once(
@@ -562,6 +566,7 @@ def run_chat(
     plain: bool,
     resume: bool,
     allow: list[str] | None = None,
+    pick: bool = False,
 ) -> None:
     """Terminal etkileşimliyse tam ekran; değilse (boru, --plain) sade akış."""
     if not plain and sys.stdin.isatty() and sys.stdout.isatty():
@@ -575,7 +580,7 @@ def run_chat(
             return session
 
         try:
-            log_path = run_tui(make, resume=resume)
+            log_path = run_tui(make, resume=resume, pick=pick)
         except FAILURES as exc:
             errors.print(Text(f"Hata: {exc}", style="h.error"))
             raise typer.Exit(1) from exc
@@ -592,6 +597,11 @@ def run_chat(
             grant(session, allow)
             if resume:
                 show_reply(session.resume_latest())
+            elif pick:
+                step: CommandReply | None = await session.run("/resume")
+                while step is not None:
+                    show_reply(step)
+                    step = await next_step(session, step)
             try:
                 await plain_loop(session)
             finally:
@@ -682,6 +692,9 @@ def pick(picker: Picker) -> Choice | None:
 def show_reply(reply: CommandReply) -> None:
     if reply.theme is not None:
         use_theme(reply.theme)
+    if reply.clipboard is not None and not copy_text(reply.clipboard):
+        console.print(Text("Panoya kopyalanamadı; metin aşağıda:", style="h.warn"))
+        console.print(Text(reply.clipboard))
     for role, text in reply.transcript:
         console.rule(f"[{'h.user' if role == 'Sen' else 'h.agent'}]{role}", align="left")
         console.print(Markdown(text) if role == "Ajan" else Text(text))
@@ -689,6 +702,23 @@ def show_reply(reply: CommandReply) -> None:
         if reply.transcript:
             console.rule(style="h.muted")
         console.print(Markdown(reply.text))
+
+
+def copy_text(text: str) -> bool:
+    """Sade akışta pano: Windows'ta clip, macOS'ta pbcopy, Linux'ta wl-copy/xclip."""
+    import shutil
+    import subprocess
+
+    for command in (["clip"], ["pbcopy"], ["wl-copy"], ["xclip", "-selection", "clipboard"]):
+        if shutil.which(command[0]) is None:
+            continue
+        data = text.encode("utf-16-le") if command[0] == "clip" else text.encode()
+        try:
+            subprocess.run(command, input=data, check=True, timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        return True
+    return False
 
 
 @app.command(hidden=True)
@@ -1027,7 +1057,7 @@ def watch_command(
     folder: Annotated[
         Path | None,
         typer.Argument(
-            help="Kayıt klasörü ya da tek kayıt (.jsonl: haritada tekrar oynatılır); "
+            help="Kayıt klasörü ya da tek kayıt (.jsonl: o kayıt açılır); "
             "verilmezse bu projenin oturumları"
         ),
     ] = None,
@@ -1037,7 +1067,7 @@ def watch_command(
 ) -> None:
     """Canlı panel: kayıtları tarayıcıda akarken gösterir; en yeni kayda kendiliğinden geçer.
 
-    Tek bir kayıt verilirse o kayıt haritada açılır: video gibi geri sarılır.
+    Tek bir kayıt verilirse o kayıt açılır (Akış defteri, Dosyalar tablosu).
     """
     log = folder if folder is not None and folder.is_file() else None
     if log is not None and log.suffix != ".jsonl":
@@ -1053,7 +1083,7 @@ def watch_command(
     except OSError as exc:
         console.print(Text(f"Canlı panel açılamadı: {exc}", style="h.error"))
         raise typer.Exit(1) from exc
-    url = panel.url_for(log) + "&view=map" if log is not None else panel.url_for(None)
+    url = panel.url_for(log) if log is not None else panel.url_for(None)
     console.print(f"Canlı panel: {url} · izlenen: {target} · kapatmak için Ctrl+C")
     if open_browser:
         open_in_browser(url)

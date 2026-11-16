@@ -84,7 +84,7 @@ PermissionDialog { align: center middle; }
 #permission-actions Button { min-width: 12; margin-left: 1; }
 #permission-actions #always { min-width: 22; }
 .compact #latest { height: 1; min-height: 1; border: none; }
-PickerScreen, KeyScreen { align: center middle; }
+PickerScreen, KeyScreen, InfoScreen { align: center middle; }
 .dialog {
     width: 96;
     max-width: 95%;
@@ -94,6 +94,9 @@ PickerScreen, KeyScreen { align: center middle; }
     background: $surface;
     border: round $primary;
 }
+.info-dialog { width: 90%; max-width: 120; height: 85%; max-height: 85%; }
+#info-body { height: 1fr; scrollbar-size: 1 1; }
+#info-body Markdown { margin: 0; padding: 0; background: transparent; }
 .dialog-title { text-style: bold; color: $primary; margin-bottom: 1; }
 .dialog-text { color: $text-muted; margin-bottom: 1; }
 .dialog-keys { color: $text-muted; margin-top: 1; }

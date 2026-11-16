@@ -14,9 +14,10 @@ seçimleri kalıcıdır: bir sonraki `harness` aynı seçimlerle açılır.
 import asyncio
 import os
 import secrets
+import subprocess
 from collections import Counter
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -35,6 +36,7 @@ from harness.core.events import (
 )
 from harness.core.metrics import read_stats
 from harness.core.permissions import Decision, PermissionManager
+from harness.core.project_context import ctx_command
 from harness.core.session_log import (
     SessionLogger,
     SessionSummary,
@@ -55,26 +57,72 @@ PromptLoader = Callable[[Anatomy], str]
 # Tarayıcı girişi; adres yalnız tarayıcı açılamazsa geri çağrıyla verilir. Dönen: e-posta.
 LoginRunner = Callable[[Callable[[str], None]], Awaitable[str | None]]
 
-HELP = """\
-| Komut | Ne yapar |
-|---|---|
-| `/model` | Model seçer; bağlı bütün sağlayıcıların modelleri tek listede |
-| `/effort` | Düşünme seviyesi; `/effort varsayılan` modelin kendi seçimine döner |
-| `/connect` | Sağlayıcı bağlar: ChatGPT'ye tarayıcıyla giriş ya da API anahtarı |
-| `/disconnect <ad>` | Kayıtlı anahtarı ya da ChatGPT girişini siler |
-| `/anatomy` | Açık katmanlar: paketler (raw, files, bash, full) ve ek katmanlar |
-| `/status` | Model, effort, anatomi, proje ve kayıt |
-| `/tools` | Açık araçlar ve izin kuralları |
-| `/usage` | Bu oturumun token, süre ve araç toplamları (`/cost`) |
-| `/new` | Yeni oturum: geçmiş sıfırlanır, yeni kayıt (`/clear`) |
-| `/resume` | Bu projenin bir oturumuna kaldığı yerden devam eder |
-| `/inspect` | Son HTML incelemesini açar |
-| `/watch` | Canlı paneli tarayıcıda açar: sohbet burada, akış orada |
-| `/theme` | Renk teması: koyu, açık, yüksek kontrast, renk körü dostu, kişisel |
-| `/exit` | Çıkış (`/quit`) |
 
-Argümansız yazılan seçim komutları liste açar. Doğrudan da seçilebilir:
-`/model opencode-go/glm-5.3`, `/effort high`, `/anatomy bash`. Seçimler kalıcıdır."""
+@dataclass(frozen=True)
+class Command:
+    """Bir /komut: yardım tablosu, komut paleti ve yazarken çıkan öneriler buradan beslenir."""
+
+    name: str
+    summary: str
+    group: str
+    usage: str = ""  # argüman örneği: "<ad>", "[arama]"
+
+
+COMMANDS: tuple[Command, ...] = (
+    Command("/model", "Model seçer; bağlı bütün sağlayıcıların modelleri tek listede", "Model"),
+    Command("/effort", "Düşünme seviyesi; `/effort varsayılan` modelin seçimine döner", "Model"),
+    Command("/connect", "Sağlayıcı bağlar: ChatGPT girişi ya da API anahtarı", "Model"),
+    Command("/disconnect", "Kayıtlı anahtarı ya da ChatGPT girişini siler", "Model", "<ad>"),
+    Command("/anatomy", "Açık katmanlar: paketler (raw, files, bash, full) ve ekler", "Harness"),
+    Command("/memory", "Hafıza katmanını (agent-context) açar ya da kapatır", "Harness"),
+    Command("/tools", "Açık araçlar ve izin kuralları", "Harness"),
+    Command("/sessions", "Geçmiş oturumlar: devam et, panelde aç, dışa aktar", "Oturum"),
+    Command(
+        "/resume", "Bir oturuma kaldığı yerden devam eder; adla aranabilir", "Oturum", "[arama]"
+    ),
+    Command("/new", "Yeni oturum: geçmiş sıfırlanır, yeni kayıt (`/clear`)", "Oturum"),
+    Command("/export", "Bu oturumu Markdown olarak dışa aktarır", "Oturum", "[dosya]"),
+    Command("/copy", "Ajanın son cevabını panoya kopyalar", "Oturum"),
+    Command("/status", "Model, effort, anatomi, proje ve kayıt", "Bilgi"),
+    Command("/usage", "Bu oturumun token, süre ve araç toplamları (`/cost`)", "Bilgi"),
+    Command("/diff", "Çalışma dizinindeki değişiklikler (git diff)", "Bilgi"),
+    Command("/watch", "Canlı paneli tarayıcıda açar: sohbet burada, akış orada", "İzleme"),
+    Command("/inspect", "Son HTML incelemesini açar", "İzleme"),
+    Command("/theme", "Renk teması: koyu, açık, yüksek kontrast, renk körü, kişisel", "Görünüm"),
+    Command("/help", "Bu liste", "Görünüm"),
+    Command("/exit", "Çıkış (`/quit`)", "Görünüm"),
+)
+
+HELP = (
+    "| Komut | Ne yapar |\n|---|---|\n"
+    + "\n".join(f"| `{c.name}{' ' + c.usage if c.usage else ''}` | {c.summary} |" for c in COMMANDS)
+    + "\n\nArgümansız yazılan seçim komutları liste açar. Doğrudan da seçilebilir: "
+    "`/model opencode-go/glm-5.3`, `/effort high`, `/anatomy bash`. Seçimler kalıcıdır. "
+    "Tam ekranda yalnız `/` yazıp Enter'a basmak aranabilir komut listesini açar; "
+    "`/` ile başlayınca öneriler durum satırında çıkar, Tab tamamlar."
+)
+
+
+def matching_commands(prefix: str) -> list[Command]:
+    """Yazılmakta olan komutla başlayanlar (öneri satırı ve Tab tamamlama)."""
+    wanted = prefix.casefold()
+    known = [c for c in COMMANDS if c.name.startswith(wanted)]
+    aliases = [
+        next(c for c in COMMANDS if c.name == target)
+        for alias, target in ALIASES.items()
+        if alias.startswith(wanted) and target not in {c.name for c in known}
+    ]
+    return known + [a for i, a in enumerate(aliases) if a not in aliases[:i]]
+
+
+# Cevabı tam ekranda sohbete değil, kapanan bir pencereye yazan komutlar.
+PANEL_COMMANDS = {
+    "/help": "Komutlar",
+    "/status": "Durum",
+    "/tools": "Araçlar",
+    "/usage": "Kullanım",
+    "/diff": "Çalışma dizinindeki değişiklikler",
+}
 
 ALIASES = {
     "/clear": "/new",
@@ -86,16 +134,20 @@ ALIASES = {
     "/providers": "/connect",
     "/login": "/connect",
     "/logout": "/disconnect",
-    "/sessions": "/resume",
 }
 DEFAULT_EFFORT_WORDS = {"varsayılan", "default", "none", "yok"}
-SESSION_LIMIT = 10
+SESSION_LIMIT = 100
 # Sohbette bir mesajın en çok kaç model adımı süreceği. Keşif görevleri 20'yi aşıyor
 # (2026-10-29 gerçek koşu: "repoyu incele" 20 adımda sonuca varmadan durdu).
 CHAT_STEP_LIMIT = 50
 STEP_LIMIT_HINT = "Adım sınırı doldu; geçmiş korundu: kaldığı yerden sürmesi için “devam” yaz."
 
-PickerKind = Literal["model", "effort", "connect", "anatomy", "resume", "theme"]
+PickerKind = Literal[
+    "model", "effort", "connect", "anatomy", "resume", "theme", "sessions", "session", "command"
+]
+# Cevabın nerede gösterileceği (tam ekranda): sohbet, kapanan pencere ya da kısa bildirim.
+# Sade akış hepsini aynı biçimde yazar.
+ReplyView = Literal["chat", "panel", "note"]
 
 
 def new_session_log(folder: Path) -> SessionLogger:
@@ -148,6 +200,10 @@ class CommandReply:
     key: KeyRequest | None = None  # sıradaki adım: gizli anahtar girişi
     login: bool = False  # sıradaki adım: tarayıcıyla ChatGPT girişi (`ChatSession.login`)
     theme: str | None = None  # renk teması değişti: ön yüz yeni temayı uygular
+    # Sohbeti kirletmesin: bilgi komutları pencerede, onaylar kısa bildirim olarak çıkar.
+    view: ReplyView = "note"
+    title: str = ""  # pencere başlığı
+    clipboard: str | None = None  # ön yüz bu metni panoya kopyalar
 
 
 def is_command(text: str) -> bool:
@@ -234,16 +290,33 @@ class ChatSession:
     async def run(self, text: str) -> CommandReply:
         name, _, argument = text.strip().partition(" ")
         name = ALIASES.get(name.lower(), name.lower())
-        argument = argument.strip()
+        reply = await self._dispatch(name, argument.strip())
+        if name in PANEL_COMMANDS and reply.view == "note" and reply.text and not reply.picker:
+            reply = replace(reply, view="panel", title=reply.title or PANEL_COMMANDS[name])
+        return reply
+
+    async def _dispatch(self, name: str, argument: str) -> CommandReply:
         match name:
+            case "/":
+                return CommandReply(picker=self._command_palette())
             case "/help":
                 return CommandReply(HELP)
+            case "/sessions":
+                return self._sessions(argument)
+            case "/diff":
+                return CommandReply(self._diff())
+            case "/copy":
+                return self._copy()
+            case "/export":
+                return self._export(argument)
+            case "/memory":
+                return self._memory()
             case "/exit":
                 return CommandReply(exit=True)
             case "/inspect":
                 return CommandReply(inspect=True)
             case "/watch":
-                return CommandReply(self._watch_panel())
+                return CommandReply(self._watch_panel(argument))
             case "/theme":
                 return self._theme(argument)
             case "/status":
@@ -276,7 +349,17 @@ class ChatSession:
         """Listeden seçilen satır. Listeden seçilen model, effort sorusunu da açar."""
         if kind == "model":
             return await self._select_model(value, ask_effort=True)
+        if kind == "command":  # komut paletinden: komutun kendisi (argümansız) çalışır
+            return await self.run(value)
+        if kind == "session":  # oturum gezgininde seçilen eylem: "resume 3", "watch 3"…
+            return await self.run(f"/{value}")
         return await self.run(f"/{kind} {value}")
+
+    def _command_palette(self) -> Picker:
+        choices = tuple(
+            Choice(c.name, c.name, c.summary.replace("`", ""), group=c.group) for c in COMMANDS
+        )
+        return Picker("command", "Komutlar (yazdıkça süzülür)", choices)
 
     # ------------------------------------------------------------------ durum
 
@@ -679,20 +762,135 @@ class ChatSession:
         self._save()
         return self.theme
 
-    def _watch_panel(self) -> str:
-        """Canlı panel bu projenin kayıtlarını izler; en yeni kayıt (bu sohbet) kendisi açılır."""
+    def _watch_panel(self, argument: str = "") -> str:
+        """Canlı panel bu projenin kayıtlarını izler; en yeni kayıt (bu sohbet) kendisi açılır.
+
+        `/watch <no>`: oturum listesindeki o kayıt panelde açılır (geçmişe bakmak için).
+        """
+        log: Path | None = None
+        if argument:
+            sessions = self._recent_sessions()
+            if not argument.isdigit() or not 1 <= int(argument) <= len(sessions):
+                return f"`{argument}` numaralı oturum yok. Liste için `/sessions`."
+            log = sessions[int(argument) - 1].path
         if self._watch is None:
             self._watch = WatchServer(self.sessions_dir)
         try:
             url = self._watch.start()
         except OSError as exc:
             return f"Canlı panel açılamadı: {exc}"
+        if log is not None:
+            url = self._watch.url_for(log)
         if self._open_url is not None:
             self._open_url(url)
+        if log is not None:
+            return f"Panelde açıldı: {url}"
         return (
-            f"Canlı panel: {url}\n\nSohbet burada sürer; panel bu projenin kayıtlarını izler "
-            "ve en yenisine (bu sohbete) kendiliğinden geçer. Onaylar burada verilir."
+            f"Canlı panel: {url} · sohbet burada sürer, panel en yeni kayda (bu sohbete) "
+            "kendiliğinden geçer; onaylar burada verilir."
         )
+
+    # ----------------------------------------------------------- yeni komutlar
+
+    def _events(self) -> list[Event]:
+        try:
+            return read_session(self.log.path) if self.log.path.exists() else []
+        except (OSError, ValueError):
+            return []
+
+    def _copy(self) -> CommandReply:
+        answers = [e.text for e in self._events() if isinstance(e, ModelReplied) and e.text.strip()]
+        if not answers:
+            return CommandReply("Kopyalanacak cevap yok: bu oturumda ajan henüz yazmadı.")
+        return CommandReply(
+            f"Son cevap panoya kopyalandı ({len(answers[-1])} karakter).", clipboard=answers[-1]
+        )
+
+    def _export(self, argument: str) -> CommandReply:
+        """`/export` bu oturumu, `/export <no>` listedeki oturumu, `/export <dosya>` oraya yazar."""
+        source = self.log.path
+        if argument.isdigit():
+            sessions = self._recent_sessions()
+            if not 1 <= int(argument) <= len(sessions):
+                return CommandReply(f"`{argument}` numaralı oturum yok. Liste için `/sessions`.")
+            source, argument = sessions[int(argument) - 1].path, ""
+        try:
+            events = read_session(source) if source.exists() else []
+        except (OSError, ValueError) as exc:
+            return CommandReply(f"Kayıt okunamadı: {exc}")
+        if not any(isinstance(e, TaskStarted) for e in events):
+            return CommandReply("Dışa aktarılacak tur yok.")
+        target = Path(argument).expanduser() if argument else source.with_suffix(".md")
+        if not target.is_absolute():
+            target = self.root / target
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(transcript_markdown(events), encoding="utf-8")
+        except OSError as exc:
+            return CommandReply(f"Yazılamadı: {exc}")
+        return CommandReply(f"Dışa aktarıldı: `{target}`")
+
+    def _memory(self) -> CommandReply:
+        base = self.anatomy.name.split("+")[0].split("-")[0]
+        layers_on = {layer for layer in LAYERS if getattr(self.anatomy, layer)}
+        turning_on = "memory" not in layers_on
+        reply = self._anatomy(compose(base, layers_on ^ {"memory"}))
+        if not turning_on:
+            return replace(reply, text="Hafıza kapandı · " + reply.text)
+        problems: list[str] = []
+        if ctx_command() is None:
+            problems.append("`ctx` bulunamadı (agent-context kurulu değil)")
+        if not (self.root / "context.yaml").is_file():
+            problems.append("projede `context.yaml` yok (`ctx bootstrap --project <ad>`)")
+        text = "Hafıza açıldı: görev başında not haritası, dosyaya dokununca ilgili notlar."
+        if problems:
+            text += " Ama çalışmayacak: " + "; ".join(problems) + "."
+        return replace(reply, text=f"{text} · {reply.text}")
+
+    def _diff(self) -> str:
+        try:
+            stat = subprocess.run(
+                ["git", "-C", str(self.root), "diff", "--stat", "HEAD"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            )
+            if stat.returncode != 0:
+                return "Burası bir git deposu değil ya da henüz commit yok; fark gösterilemiyor."
+            body = subprocess.run(
+                ["git", "-C", str(self.root), "diff", "HEAD"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            ).stdout
+            untracked = subprocess.run(
+                ["git", "-C", str(self.root), "ls-files", "--others", "--exclude-standard"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+            ).stdout.split()
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return f"git çalıştırılamadı: {exc}"
+        if not stat.stdout.strip() and not untracked:
+            return "Çalışma dizini temiz: son commit'ten beri değişiklik yok."
+        parts: list[str] = []
+        if stat.stdout.strip():
+            parts.append(f"```\n{stat.stdout.rstrip()}\n```")
+        if untracked:
+            parts.append(
+                "Yeni (izlenmeyen) dosyalar: " + ", ".join(f"`{p}`" for p in untracked[:30])
+            )
+        if body.strip():
+            limit = 20_000
+            shown = body if len(body) <= limit else body[:limit] + "\n… (kalanı kesildi)"
+            parts.append(f"```diff\n{shown.rstrip()}\n```")
+        return "\n\n".join(parts)
 
     def close(self) -> None:
         """Ön yüz kapanırken: canlı panel sunucusu durur."""
@@ -706,22 +904,64 @@ class ChatSession:
             return []
         return list_sessions(self.sessions_dir)[:SESSION_LIMIT]
 
-    def _sessions_picker(self) -> Picker | None:
+    def _sessions_picker(
+        self, kind: PickerKind, title: str, only: list[int] | None = None
+    ) -> Picker | None:
+        """Oturumlar gün gruplarıyla; satır = ilk görev (aranır), ayrıntı = saat, tur, model."""
         sessions = self._recent_sessions()
         if not sessions:
             return None
+        today = datetime.now().date()
         choices: list[Choice] = []
         for i, s in enumerate(sessions, start=1):
-            task = short(s.first_task.replace("\n", " "), 60)
+            if only is not None and i not in only:
+                continue
+            days = (today - s.updated.date()).days
+            group = (
+                "Bugün"
+                if days == 0
+                else "Dün"
+                if days == 1
+                else "Bu hafta"
+                if days < 7
+                else "Daha eski"
+            )
+            # Grup günü söylüyor: bugün/dün için saat yeter; satır tek satıra sığsın.
+            when = f"{s.updated:%H:%M}" if days < 2 else f"{s.updated:%d.%m %H:%M}"
+            detail = [when, f"{s.turns} tur"]
+            if s.model and s.model != self.model:
+                detail.append(s.model)
+            if s.turns > 1 and s.last_task != s.first_task:
+                detail.append("son: " + short(s.last_task.replace("\n", " "), 30))
             choices.append(
                 Choice(
                     str(i),
-                    f"{s.updated:%d.%m %H:%M}",
-                    f"{s.turns} tur · {task}",
+                    short(s.first_task.replace("\n", " "), 55),
+                    " · ".join(detail),
+                    group=group,
                     current=s.path == self.log.path,
                 )
             )
-        return Picker("resume", "Hangi oturuma devam edilsin?", tuple(choices))
+        return Picker(kind, title, tuple(choices))
+
+    def _sessions(self, argument: str) -> CommandReply:
+        """Oturum gezgini: oturum seçilince ne yapılacağı sorulur."""
+        if argument:  # "/sessions 3": o oturumun eylemleri
+            sessions = self._recent_sessions()
+            if not argument.isdigit() or not 1 <= int(argument) <= len(sessions):
+                return CommandReply(f"`{argument}` numaralı oturum yok. Liste için `/sessions`.")
+            s = sessions[int(argument) - 1]
+            title = f"{short(s.first_task.replace(chr(10), ' '), 60)} · {s.updated:%d.%m %H:%M}"
+            actions = (
+                Choice(f"resume {argument}", "Devam et", "konuşma ekrana gelir, kaldığı yerden"),
+                Choice(f"watch {argument}", "Panelde aç", "defter ve zaman çizelgesiyle incele"),
+                Choice(f"export {argument}", "Dışa aktar", f"{s.path.with_suffix('.md').name}"),
+            )
+            return CommandReply(picker=Picker("session", title, actions))
+        picker = self._sessions_picker("sessions", "Geçmiş oturumlar (yazarak ara)")
+        if picker is None:
+            return CommandReply("Bu projede kayıtlı oturum yok.")
+        return CommandReply(picker=picker)
 
     def resume_latest(self) -> CommandReply:
         """`harness -c`: bu projenin en son oturumuna devam."""
@@ -731,12 +971,24 @@ class ChatSession:
 
     def _resume(self, argument: str) -> CommandReply:
         sessions = self._recent_sessions()
-        if not argument:
-            picker = self._sessions_picker()
+        if not argument or not argument.isdigit():
+            only = None
+            if argument:  # "/resume indirim": görevlerinde geçen oturumlar
+                words = argument.casefold().split()
+                only = [
+                    i
+                    for i, s in enumerate(sessions, start=1)
+                    if all(w in f"{s.first_task} {s.last_task}".casefold() for w in words)
+                ]
+                if len(only) == 1:
+                    return self._resume(str(only[0]))
+                if not only:
+                    return CommandReply(f"“{argument}” geçen oturum yok. Liste için `/resume`.")
+            picker = self._sessions_picker("resume", "Hangi oturuma devam edilsin?", only)
             if picker is None:
                 return CommandReply("Bu projede kayıtlı oturum yok.")
             return CommandReply(picker=picker)
-        if not argument.isdigit() or not 1 <= int(argument) <= len(sessions):
+        if not 1 <= int(argument) <= len(sessions):
             return CommandReply(f"`{argument}` numaralı oturum yok. Liste için `/resume`.")
         path = sessions[int(argument) - 1].path
         try:
@@ -763,6 +1015,32 @@ class ChatSession:
                 f" şimdi `{self.anatomy.name}` açık."
             )
         return CommandReply(text, reset=True, transcript=tuple(transcript))
+
+
+def transcript_markdown(events: list[Event]) -> str:
+    """Oturumun okunur dökümü: görevler, ajanın yazdıkları ve araç çağrıları tek satırla."""
+    lines: list[str] = []
+    for event in events:
+        if isinstance(event, TaskStarted):
+            stamp = f"{event.timestamp.astimezone():%d.%m.%Y %H:%M}" if event.timestamp else ""
+            meta = " · ".join(
+                x for x in (stamp, event.model, event.anatomy and event.anatomy.name) if x
+            )
+            lines += [f"## Sen{f' · {meta}' if meta else ''}", "", event.task, ""]
+        elif isinstance(event, ModelReplied) and event.text.strip():
+            lines += [
+                "## Ajan" if not event.tool_calls else "**Ajan:**",
+                "",
+                event.text.strip(),
+                "",
+            ]
+        elif isinstance(event, ToolFinished):
+            mark = "✗" if event.result.is_error else "✓"
+            what = f"{event.call.name} · {event.summary}" if event.summary else event.call.name
+            lines.append(f"- {mark} `{what}`" + (f" → {event.outcome}" if event.outcome else ""))
+        elif isinstance(event, HarnessIntervened):
+            lines.append(f"- ⚑ harness · {event.layer}: {event.summary}")
+    return "\n".join(lines).strip() + "\n"
 
 
 def usage_text(events: list[Event]) -> str:

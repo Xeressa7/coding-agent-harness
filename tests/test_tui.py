@@ -15,6 +15,7 @@ from harness.cli.tui import (
     ChatMessage,
     ComposeInput,
     HarnessApp,
+    InfoScreen,
     KeyScreen,
     PermissionDialog,
     PickerScreen,
@@ -291,14 +292,17 @@ async def test_new_command_recovers_a_cancelled_session(tmp_path: Path) -> None:
 
         await app.submit("/help")
         await pilot.pause()
-        (help_card,) = app.query(".command-message")
-        assert "/resume" in help_card.source  # type: ignore[attr-defined]
+        assert isinstance(app.screen, InfoScreen)  # yardım pencerede, sohbete yazılmaz
+        assert "/resume" in app.screen.text and not app.query(".command-message")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, InfoScreen)  # Esc pencereyi kapattı
         assert app.failed  # yardım oturumu kurtarmaz
 
         await app.submit("/new")
         await pilot.pause()
         assert not app.failed and not app.query_one("#send", Button).disabled
-        assert [c.role for c in app.query(ChatMessage)] == ["Harness"]
+        assert list(app.query(ChatMessage)) == []  # "Yeni oturum" bildirimi sohbete düşmez
         assert app.session_log.path != old_log
         assert len(app.agent.history) == 1
 
@@ -623,3 +627,34 @@ async def test_connect_asks_for_a_hidden_key_and_saves_it(tmp_path: Path) -> Non
         await pilot.pause()
         assert "OPENAI_API_KEY" not in load_keys()
         assert "Vazgeçildi" in str(app.query_one("#status", Static).render())
+
+
+async def test_slash_opens_palette_suggests_and_tab_completes(tmp_path: Path) -> None:
+    app = make_app(ScriptedLLM([]), tmp_path)
+    async with app.run_test() as pilot:
+        editor = app.query_one(ComposeInput)
+        editor.text = "/se"
+        await pilot.pause()
+        assert "/sessions" in str(app.query_one("#status", Static).render())
+        await pilot.press("tab")
+        await pilot.pause()
+        assert editor.text == "/sessions "
+
+        editor.text = "/"
+        await pilot.press("enter")
+        await pilot.pause()
+        palette = app.screen
+        assert isinstance(palette, PickerScreen) and palette.picker.kind == "command"
+        await pilot.press("escape")
+        await pilot.pause()
+
+        await app.submit("/status")
+        await pilot.pause()
+        assert isinstance(app.screen, InfoScreen) and app.screen.title_text == "Durum"
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, InfoScreen)
+        await app.submit("/theme açık")
+        await pilot.pause()
+        assert not app.query(".command-message")  # onay sohbete değil bildirime düştü
+        assert any("açık" in n.message for n in app._notifications)  # type: ignore[attr-defined]

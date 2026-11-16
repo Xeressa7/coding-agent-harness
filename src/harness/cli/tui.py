@@ -27,6 +27,7 @@ from harness.cli.commands import (
     KeyRequest,
     Picker,
     is_command,
+    matching_commands,
 )
 from harness.cli.inspector import (
     code_blocks_summary,
@@ -79,8 +80,15 @@ class ComposeInput(TextArea):
             super().__init__()
             self.text = text
 
+    class Complete(Message):
+        """Tab: yazılmakta olan /komut ilk öneriyle tamamlansın."""
+
     async def _on_key(self, event: events.Key) -> None:
-        if event.key in {"enter", "ctrl+enter"}:
+        if event.key == "tab" and self.text.startswith("/") and " " not in self.text:
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Complete())
+        elif event.key in {"enter", "ctrl+enter"}:
             event.stop()
             event.prevent_default()
             self.post_message(self.Submitted(self.text))
@@ -246,6 +254,35 @@ class PickerScreen(ModalScreen[Choice | None]):
             self.dismiss(choice)
 
 
+class InfoScreen(ModalScreen[None]):
+    """Bilgi komutlarının (/help, /status, /usage, /diff…) penceresi: sohbete yazılmaz."""
+
+    BINDINGS = [Binding("escape", "dismiss", "Kapat"), Binding("q", "dismiss", show=False)]
+
+    def __init__(self, title: str, text: str) -> None:
+        super().__init__()
+        self.title_text = title
+        self.text = text
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog info-dialog"):
+            yield Static(Text(self.title_text), classes="dialog-title")
+            with VerticalScroll(id="info-body"):
+                yield Markdown(self.text, open_links=False)
+            yield Static("Esc: kapat · ↑↓ / PgUp PgDn: kaydır", classes="dialog-keys")
+
+    def on_mount(self) -> None:
+        self.query_one("#info-body", VerticalScroll).focus()
+
+    async def action_dismiss(self, result: None = None) -> None:
+        self.dismiss(result)
+
+
+def note_text(markdown: str) -> str:
+    """Bildirim için düz metin: Markdown işaretleri atılır (bildirim Markdown çizmez)."""
+    return markdown.replace("**", "").replace("`", "")
+
+
 class KeyScreen(ModalScreen[str | None]):
     """API anahtarı için gizli alan; yazılan ekranda görünmez."""
 
@@ -300,6 +337,7 @@ class HarnessApp(App[None]):
         self._turn_number = 0
         self._active_question: str | None = None
         self._active_events: list[Event] = []
+        self._suggesting = False  # durum satırı şu an komut önerisi gösteriyor
         for palette in available().values():
             self.register_theme(textual_theme(palette))
         self.theme = f"harness-{session.theme}"
@@ -338,7 +376,8 @@ class HarnessApp(App[None]):
                             "Mesajını aşağıya yaz. Yanıtlar burada akar; "
                             "işlem durumu sağda kalır.\n"
                             "Yukarı kaydırdığında okuduğun yer korunur.\n"
-                            "/model: model seç · /connect: sağlayıcı bağla · /help: komutlar"
+                            "/ yazıp Enter: komut listesi · /sessions: geçmiş oturumlar · "
+                            "/model: model seç"
                         ),
                         id="welcome",
                     )
@@ -368,8 +407,8 @@ class HarnessApp(App[None]):
         self.query_one("#conversation", VerticalScroll).anchor()
         self.query_one("#flow", VerticalScroll).anchor()
         self.query_one(ComposeInput).focus()
-        if self.initial_reply is not None:  # harness -c: önceki oturum ekrana gelir
-            await self.show_reply(self.initial_reply)
+        if self.initial_reply is not None:  # harness -c / -r: önceki oturum ya da seçim listesi
+            await self.handle_reply(self.initial_reply)
         if self.initial_task:
             await self.submit(self.initial_task)
 
@@ -497,15 +536,50 @@ class HarnessApp(App[None]):
         await self.handle_reply(await self.session.login(show_url))
 
     async def show_reply(self, reply: CommandReply) -> None:
+        """Komut cevabı sohbeti kirletmez: bilgi pencerede, onay kısa bildirimde çıkar."""
         if reply.reset:
             await self.reset_conversation(reply.transcript)
+        if reply.clipboard is not None:
+            self.copy_to_clipboard(reply.clipboard)
         if reply.text:
-            self.query_one("#welcome").display = False
-            await self.query_one("#conversation", VerticalScroll).mount(
-                ChatMessage("Harness", reply.text, kind="command")
-            )
+            if reply.view == "chat":
+                self.query_one("#welcome").display = False
+                await self.query_one("#conversation", VerticalScroll).mount(
+                    ChatMessage("Harness", reply.text, kind="command")
+                )
+            elif reply.view == "panel":
+                await self.push_screen(InfoScreen(reply.title or "Harness", reply.text))
+            else:
+                self.notify(note_text(reply.text), title="Harness", timeout=8, markup=False)
         self.query_one("#topbar", Static).update(self.topbar_text())
         self.set_status("Görev sürüyor…" if self.busy else "Hazır · Enter gönder")
+
+    @on(TextArea.Changed, "#message-input")
+    def suggest_commands(self, event: TextArea.Changed) -> None:
+        """`/` ile başlayan taslakta eşleşen komutlar durum satırında; Tab ilkini tamamlar."""
+        text = event.text_area.text
+        if not text.startswith("/") or " " in text or "\n" in text:
+            if self._suggesting:
+                self._suggesting = False
+                self.set_status("Görev sürüyor…" if self.busy else "Hazır · Enter gönder")
+            return
+        found = matching_commands(text)
+        self._suggesting = True
+        if text == "/":
+            self.set_status("Enter: komut listesi · ya da yazmaya devam et")
+        elif found:
+            shown = " · ".join(f"{c.name} {c.summary.split(';')[0]}" for c in found[:3])
+            self.set_status(f"Tab ↹ {shown}")
+        else:
+            self.set_status(f"{text}: böyle bir komut yok · / Enter: liste")
+
+    @on(ComposeInput.Complete)
+    def complete_command(self) -> None:
+        editor = self.query_one(ComposeInput)
+        found = matching_commands(editor.text)
+        if found:
+            editor.text = found[0].name + " "
+            editor.move_cursor(editor.document.end)
 
     async def reset_conversation(self, transcript: tuple[tuple[str, str], ...]) -> None:
         """Yeni ya da devam edilen oturum: ekran o oturumun konuşmasını gösterir."""
@@ -684,7 +758,7 @@ class HarnessApp(App[None]):
                 await self._turn.wait()
 
     async def action_stop(self) -> None:
-        if isinstance(self.screen, (PickerScreen, KeyScreen)):
+        if isinstance(self.screen, (PickerScreen, KeyScreen, InfoScreen)):
             self.screen.dismiss(None)
             return
         if self.busy and self._turn is not None:
@@ -739,14 +813,23 @@ class HarnessApp(App[None]):
 
 
 def run_tui(
-    make_session: Callable[[httpx.AsyncClient], ChatSession], *, resume: bool = False
+    make_session: Callable[[httpx.AsyncClient], ChatSession],
+    *,
+    resume: bool = False,
+    pick: bool = False,
 ) -> Path:
     """Tam ekran sohbeti açar; kapanınca son kullanılan kayıt dosyasının yolunu döner."""
 
     async def run() -> Path:
         async with httpx.AsyncClient(timeout=120) as http:
             session = make_session(http)
-            reply = session.resume_latest() if resume else None
+            reply = (
+                session.resume_latest()
+                if resume
+                else await session.run("/resume")
+                if pick
+                else None
+            )
             await HarnessApp(session, initial_reply=reply).run_async()
             return session.log.path
 

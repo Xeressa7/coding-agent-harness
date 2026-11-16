@@ -19,6 +19,7 @@ harness                          # sohbet: terminalde tam ekran, boruda sade ak�
 harness -p "soru"                # tek görev; yalnız cevap stdout'a (betiklerde kullanılır)
 harness -p "düzelt" --allow write_file --allow bash   # -p'de izin önceden verilir
 harness -c                       # bu projenin son oturumuna devam (-p ile de olur)
+harness -r                       # açılışta geçmiş oturumlardan birini seç
 harness -m opencode-go/glm-5.3 --effort high   # yalnız bu koşu için başka model
 harness models [sağlayıcı]       # modeller ve effort seviyeleri (betikler için)
 harness sessions                 # bu projenin oturumları
@@ -50,7 +51,18 @@ yazdıkça süzülen bir pencere (↑/↓, Enter, Esc), sade akışta numaralı 
   diğerlerinde API anahtarı gizli bir alana girilir, `~/.harness/auth.json`'a
   (yalnız sahibinin okuyacağı izinle) kaydedilir ve o sağlayıcının modelleri gelir.
   `/disconnect <ad>` kaydı siler.
-- `/effort`, `/anatomy`, `/resume` (`/sessions`): aynı biçimde liste ya da ad.
+- Yalnız `/` yazıp Enter: aranabilir komut listesi. `/` ile başlayınca eşleşen komutlar
+  durum satırında görünür, Tab tamamlar. Bilgi komutları (`/help`, `/status`, `/tools`,
+  `/usage`, `/diff`) sohbete yazılmaz, Esc ile kapanan pencerede açılır; onaylar
+  ("Tema: açık", "Yeni oturum") kısa bildirim olarak çıkar.
+- `/sessions`: geçmiş oturumlar gün gruplarıyla (Bugün, Dün, Bu hafta...); satır ilk
+  görev, yazarak aranır. Seçilen oturum için **Devam et**, **Panelde aç** (defter ve
+  dosya tablosuyla incele), **Dışa aktar** (Markdown). `/resume <arama>` görevinde o
+  sözcük geçen oturuma doğrudan döner; birden çok eşleşme varsa süzülmüş liste açar.
+- `/effort`, `/anatomy`: aynı biçimde liste ya da ad. `/memory` hafıza katmanını
+  açıp kapatır (çalışmayacaksa nedenini söyler).
+- `/diff`: son commit'ten beri çalışma dizinindeki değişiklikler. `/copy`: ajanın son
+  cevabını panoya. `/export [dosya]`: oturumun Markdown dökümü (varsayılan kaydın yanı).
 - `/watch`: canlı paneli tarayıcıda açar. Sohbet terminalde sürer, panel aynı
   kaydı okuyup akıtır; hiçbir şey kaybolmaz, onaylar terminalde verilir.
   **Akış** sekmesi bir defterdir: üstte koşunun durumu (tamamlandı / adım sınırı /
@@ -62,19 +74,17 @@ yazdıkça süzülen bir pencere (↑/↓, Enter, Esc), sade akışta numaralı 
   işaretli, kesik sonuçlar etiketli), araç satırı için **Modele giden** ve kesildiyse
   **Aracın tam çıktısı** ayrı sekmelerde. Eski kayıtlarda harness'ın sessizce kestiği
   sonuçlar "sessiz kesme" diye görünür.
-  **Harita** sekmesi ajanın proje ağacında nerede dolaştığını gösterir: okunan,
-  aranan, düzenlenen dosyalar sırayla yaylarla bağlanır, aramalar eşleştiği
-  dosyalara kesik çizgiyle açılır, dosya yanındaki şerit okunan satır aralıklarını
-  gösterir (koyu yer: tekrar okunmuş). Zaman çubuğuyla video gibi geri sarılır
-  (boşluk: oynat, ←/→: önceki/sonraki eylem); konum adrese yazılır (`&t=8`),
-  o an link olarak paylaşılabilir. Sağda o adımda modelin ne düşündüğü durur.
-  "İçe aktarmalar" açıkken odaktaki dosyanın proje içi importları yeşil yaylarla
-  görünür; üst şerit geçişlerin kaçının bir import bağlantısını izlediğini ve okunan
-  satırların tekrar payını sayar. Biten bir kayıt doğrudan haritada açılır:
-  `harness watch <kayıt>.jsonl`.
+  **Dosyalar** sekmesi bir tablodur: her satır ajanın dokunduğu bir dosya, her sütun
+  bir adım; hücredeki harf ne yapıldığını söyler (O okudu, D düzenledi, Y yazdı,
+  S sildi, • aramada çıktı). Üstte komut ve arama şeritleri, düz cümleyle özet
+  ("12 adımda 6 dosyaya dokundu, 2'sini değiştirdi... okunan satırların %24'ü tekrar").
+  Hücreye tıklayınca o adımda modelin ne dediği ve sonuç; oradan Akış'ta açılır.
+  Biten bir kayıt doğrudan açılır: `harness watch <kayıt>.jsonl`. Defterde düzenleme
+  ve yazma satırlarında **Fark** sekmesi var (yazmada eski hâl, dosya önceden tam
+  okunduysa o okumadan çıkarılır).
 - `/theme`: renk teması (koyu, açık, yüksek-kontrast, renk-körü; `~/.harness/theme.toml`
   ile kişisel). Tam ekranda Ctrl+T sıradakine geçer. `NO_COLOR` sade akışı renksiz yapar.
-- `/status` · `/tools` · `/usage` (`/cost`) · `/new` (`/clear`) · `/inspect` · `/exit` (`/quit`).
+- `/status` · `/tools` · `/usage` (`/cost`) · `/new` (`/clear`) · `/inspect` · `/help` · `/exit` (`/quit`).
 
 Model, effort, anatomi ve tema seçimleri kalıcıdır: bir sonraki `harness` aynı
 seçimlerle açılır. Geçiş sırasında geçmiş korunur; "oturum boyu" izinler `/new`,

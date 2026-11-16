@@ -105,7 +105,7 @@ def fake_ctx(monkeypatch: pytest.MonkeyPatch) -> list[tuple[list[str], dict[str,
             text = "HAFIZA — `a.py` dosyasini anan not(lar):\n- `.memory/facts/a.md` — a.py"
         return json.dumps({"hookSpecificOutput": {"additionalContext": text}})
 
-    monkeypatch.setattr(project_context, "_ctx_command", lambda: "ctx")
+    monkeypatch.setattr(project_context, "ctx_command", lambda: "ctx")
     monkeypatch.setattr(project_context, "_run_ctx", run_ctx)
     return calls
 

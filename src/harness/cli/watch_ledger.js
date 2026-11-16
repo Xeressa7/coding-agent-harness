@@ -724,6 +724,7 @@
       reset() { events = []; selected = null; picked = false; filter = null; follow = true; tab = null; model = compile([]); draw(); },
       append(event) { events.push(event); schedule(); },
       visible() { model = compile(events); draw(); },
+      focus(id) { model = compile(events); draw(); picked = true; select(id, true); },
     };
   }
 
