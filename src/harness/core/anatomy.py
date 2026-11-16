@@ -73,6 +73,9 @@ class Anatomy(BaseModel):
     prompt: Literal["agent", "raw"] = "agent"  # prompts/ altındaki talimat dosyası
     save_code_blocks: bool = False  # seviye 0: cevaptaki adlı kod blokları dosyaya yazılır
     loop_guard: bool = False  # takılma uyarısı (core/guards.py)
+    output_limit: bool = True  # uzun araç çıktısının ortası kesilir (core/context.py)
+    agents_md: bool = True  # AGENTS.md sistem talimatına eklenir (core/project_context.py)
+    memory: bool = False  # agent-context hafızası: harita + dosyaya dokununca not (ctx)
 
     def tool_registry(self, root: Path) -> ToolRegistry:
         """Açık araçları, çalışma dizinine bağlı olarak kurar."""
@@ -85,12 +88,27 @@ PRESETS: dict[str, Anatomy] = {
     "bash": Anatomy(name="bash", tools=(*_FILE_TOOLS, "bash")),
     "full": Anatomy(name="full", tools=(*_FILE_TOOLS, "bash", "fetch_url")),
 }
-DEFAULT_PRESET = "files"
+DEFAULT_PRESET = "bash"  # standart harness: komut çalıştırır, her çağrıda izin sorar
 
 # Preset'in üstüne `+ad` ile açılıp `-ad` ile kapatılan katmanlar: `bash+loop_guard`.
+# Varsayılanı açık olan katman (output_limit) `-ad` ile kapatılır.
 LAYERS: dict[str, str] = {
     "loop_guard": "aynı araç çağrısı art arda 3 kez gelince modeli uyarır, 5'te durdurur",
+    "output_limit": "40.000 karakteri aşan araç çıktısının ortasını keser, modele ve kayda söyler",
+    "agents_md": "projedeki AGENTS.md'yi (yoksa CLAUDE.md) sistem talimatına ekler",
+    "memory": "agent-context hafızası: görev başında not haritası, dosya okununca ilgili notlar",
 }
+
+
+def compose(base: str, layers_on: set[str]) -> str:
+    """Preset + açık katmanlar → ad: preset'in varsayılanından farklı olan katmanlar yazılır."""
+    preset = PRESETS[base]
+    changes = "".join(
+        ("+" if layer in layers_on else "-") + layer
+        for layer in LAYERS
+        if (layer in layers_on) != getattr(preset, layer)
+    )
+    return base + changes
 
 
 def get_preset(name: str) -> Anatomy:

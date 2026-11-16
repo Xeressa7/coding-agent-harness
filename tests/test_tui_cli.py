@@ -39,7 +39,7 @@ def test_interactive_chat_routes_to_tui(tmp_path: Path, monkeypatch: pytest.Monk
     # Standart biçim: komutsuz `harness` sohbet açar, -c son oturuma devam eder.
     result = runner.invoke(cli.app, ["-m", "m2", "-c"])
     assert result.exit_code == 0, result.output
-    assert calls == [("test-model", "raw", False), ("m2", "files", True)]
+    assert calls == [("test-model", "raw", False), ("m2", "bash", True)]
 
 
 def test_plain_bypasses_fullscreen_even_in_interactive_terminal(

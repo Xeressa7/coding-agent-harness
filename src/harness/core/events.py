@@ -91,7 +91,11 @@ class ToolStarted(_Event):
 
 class ToolFinished(_Event):
     """Araç bitti. `outcome` sonucun kısa özeti ("40 satır", "çıkış kodu 1"),
-    `details` aracın ölçümleri (satır, bayt, çıkış kodu, plan adımları...)."""
+    `details` aracın ölçümleri (satır, bayt, çıkış kodu, plan adımları...).
+
+    `result` modele gidendir (harness notları ve kesme dahil). Çıktı sınırı
+    sonucu kestiyse aracın döndürdüğü tam metin `full_content`'tedir.
+    """
 
     kind: Literal["tool_finished"] = "tool_finished"
     call: ToolCall
@@ -101,6 +105,7 @@ class ToolFinished(_Event):
     summary: str = ""
     outcome: str = ""
     details: dict[str, Any] = {}
+    full_content: str | None = None  # yalnız kesildiyse dolu; eski kayıtlarda yok
 
 
 class CodeBlocksSaved(_Event):
@@ -126,7 +131,9 @@ class HarnessIntervened(_Event):
     kind: Literal["harness_intervened"] = "harness_intervened"
     step: int
     layer: str
-    action: str  # "warn": çağrı çalıştı, sonuca not eklendi · "block": çağrı çalıştırılmadı
+    # "warn": çağrı çalıştı, sonuca not eklendi · "block": çağrı çalıştırılmadı ·
+    # "truncate": sonucun ortası kesildi, modele söylendi (output_limit)
+    action: str
     summary: str
     call_id: str | None = None
 

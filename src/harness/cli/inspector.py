@@ -46,8 +46,20 @@ def code_blocks_summary(event: CodeBlocksSaved) -> str:
     return " · ".join(parts)
 
 
-LAYER_NAMES = {"loop_guard": "Takılma uyarısı"}
-_ACTIONS = {"warn": "modele hatırlatıldı", "block": "çağrı çalıştırılmadı"}
+LAYER_NAMES = {
+    "loop_guard": "Takılma uyarısı",
+    "output_limit": "Çıktı sınırı",
+    "agents_md": "Proje talimatı",
+    "memory": "Hafıza",
+}
+_ACTIONS = {
+    "warn": "modele hatırlatıldı",
+    "block": "çağrı çalıştırılmadı",
+    "truncate": "ortası kesildi, modele söylendi",
+    "inject": "sistem talimatına eklendi",
+    "recall": "sonuca not eklendi",
+    "skip": "çalışmadı",
+}
 
 
 def intervention_summary(event: HarnessIntervened) -> str:

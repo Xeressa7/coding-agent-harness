@@ -17,10 +17,12 @@ from contextlib import aclosing
 from datetime import UTC, datetime
 from pathlib import Path
 from time import perf_counter
+from typing import Any
+from uuid import uuid4
 
 from harness.core.anatomy import Anatomy
 from harness.core.code_blocks import extract_code_blocks, save_code_blocks
-from harness.core.context import truncated_history
+from harness.core.context import grouped, limit_output
 from harness.core.events import (
     CodeBlocksSaved,
     ContextAssembled,
@@ -38,6 +40,7 @@ from harness.core.events import (
 )
 from harness.core.guards import RepeatGuard
 from harness.core.permissions import Decision, PermissionManager
+from harness.core.project_context import CtxMemory, MemoryUnavailable, load_instructions
 from harness.llm.base import LLMClient, StreamingLLMClient
 from harness.messages import (
     AssistantMessage,
@@ -48,6 +51,9 @@ from harness.messages import (
     UserMessage,
 )
 from harness.tools.base import ToolRegistry
+
+# Hafızanın "dosyaya dokununca hatırlat" kancası hangi araçlarda çalışır (ctx'in araç adlarıyla).
+_RECALL_TOOLS = {"read_file": "Read", "edit_file": "Edit", "write_file": "Write"}
 
 
 class Agent:
@@ -89,7 +95,73 @@ class Agent:
         self._tools = tools
         self.permissions = permissions
         self._max_steps = max_steps
+        # Anatomisiz kurulan ajan (testler, eski çağıranlar) katmanlarda varsayılanları kullanır.
+        self._layers = anatomy if anatomy is not None else Anatomy(name="varsayılan")
+        self._prepared = False
+        self._memory = (
+            CtxMemory(root, session_id=uuid4().hex)
+            if self._layers.memory and root is not None
+            else None
+        )
         self.history: list[Message] = [SystemMessage(text=system_prompt), *history]
+
+    async def _add_project_context(self) -> AsyncGenerator[HarnessIntervened]:
+        """AGENTS.md ve hafıza haritasını sistem talimatının sonuna ekler (adım 0).
+
+        Eklenen metnin kendisi ilk `ContextAssembled`'da görünür; burada her ekleme
+        (ya da çalışmayan katman) ayrı bir müdahale olarak kaydedilir.
+        """
+        blocks: list[str] = []
+        now = datetime.now
+        if self._layers.agents_md and self._root is not None:
+            found = load_instructions(self._root, drop_memory_index=self._memory is not None)
+            if found is not None:
+                blocks.append(f"# Proje talimatı ({found.source})\n\n{found.text}")
+                yield HarnessIntervened(
+                    step=0,
+                    layer="agents_md",
+                    action="inject",
+                    summary=f"{found.source} · {grouped(len(found.text))} karakter",
+                    timestamp=now(UTC),
+                )
+        if self._memory is not None:
+            try:
+                index = await self._memory.index()
+            except MemoryUnavailable as exc:
+                self._memory = None  # dosya başına tekrar denenip yavaşlatmasın
+                yield HarnessIntervened(
+                    step=0, layer="memory", action="skip", summary=str(exc), timestamp=now(UTC)
+                )
+            else:
+                if index:
+                    blocks.append(index)
+                    yield HarnessIntervened(
+                        step=0,
+                        layer="memory",
+                        action="inject",
+                        summary=f"not haritası · {grouped(len(index))} karakter",
+                        timestamp=now(UTC),
+                    )
+        if blocks and isinstance(self.history[0], SystemMessage):
+            text = "\n\n".join([self.history[0].text, *blocks])
+            self.history[0] = SystemMessage(text=text)
+
+    async def _recall(
+        self, tool: str, details: dict[str, Any], is_error: bool
+    ) -> tuple[str, str] | None:
+        """Hafıza katmanı: dokunulan dosyayı anan notlar → (modele not, kayıt özeti)."""
+        kind = _RECALL_TOOLS.get(tool)
+        path = details.get("path")
+        if self._memory is None or kind is None or is_error or not isinstance(path, str):
+            return None
+        try:
+            notes = await self._memory.recall(path, kind)
+        except MemoryUnavailable:
+            return None
+        if not notes:
+            return None
+        count = sum(line.startswith("- ") for line in notes.splitlines())
+        return f"[harness · hafıza]\n{notes}", f"{path} → {count} not"
 
     async def run(self, task: str) -> AsyncGenerator[Event, bool | None]:
         self.history.append(UserMessage(text=task))
@@ -106,8 +178,12 @@ class Agent:
             timestamp=datetime.now(UTC),
         )
         try:
+            if not self._prepared:  # yalnız ilk görevde: talimat bir kez kurulur
+                self._prepared = True
+                async for note in self._add_project_context():
+                    yield note
             for step in range(1, self._max_steps + 1):
-                messages = tuple(truncated_history(self.history))
+                messages = tuple(self.history)
                 specs = tuple(self._tools.specs())
                 yield ContextAssembled(
                     step=step, messages=messages, tools=specs, timestamp=datetime.now(UTC)
@@ -229,6 +305,33 @@ class Agent:
                         note = verdict.message(call.name)
                         content = f"{result.content}\n\n{note}"
                         result = result.model_copy(update={"content": content})
+                    recalled = await self._recall(call.name, outcome.details, result.is_error)
+                    if recalled is not None:
+                        notes, recall_summary = recalled
+                        content = f"{result.content}\n\n{notes}"
+                        result = result.model_copy(update={"content": content})
+                        yield HarnessIntervened(
+                            step=step,
+                            layer="memory",
+                            action="recall",
+                            summary=recall_summary,
+                            call_id=call.id,
+                            timestamp=datetime.now(UTC),
+                        )
+                    full_content: str | None = None
+                    limited = limit_output(result.content) if self._layers.output_limit else None
+                    if limited is not None:  # modele kesilmiş hâl gider, tam hâl kayıtta kalır
+                        full_content = result.content
+                        result = result.model_copy(update={"content": limited})
+                        yield HarnessIntervened(
+                            step=step,
+                            layer="output_limit",
+                            action="truncate",
+                            summary=f"{call.name} sonucu {grouped(len(full_content))} → "
+                            f"{grouped(len(limited))} karakter",
+                            call_id=call.id,
+                            timestamp=datetime.now(UTC),
+                        )
                     self.history.append(result)
                     yield ToolFinished(
                         call=call,
@@ -238,6 +341,7 @@ class Agent:
                         summary=summary,
                         outcome=outcome.summary,
                         details=outcome.details,
+                        full_content=full_content,
                         timestamp=datetime.now(UTC),
                     )
         except asyncio.CancelledError:

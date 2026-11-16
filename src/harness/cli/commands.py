@@ -25,7 +25,7 @@ from harness.cli.inspector import reread_text
 from harness.cli.themes import THEME_FILE, available, palette_for
 from harness.cli.watch import WatchServer
 from harness.core.agent import Agent
-from harness.core.anatomy import LAYERS, PRESETS, Anatomy, get_preset
+from harness.core.anatomy import LAYERS, PRESETS, Anatomy, compose, get_preset
 from harness.core.events import (
     Event,
     HarnessIntervened,
@@ -620,7 +620,7 @@ class ChatSession:
         if not argument:
             presets = tuple(
                 Choice(
-                    a.name + "".join(f"+{x}" for x in layers_on if not getattr(a, x)),
+                    compose(a.name, set(layers_on)),
                     a.name,
                     ", ".join(a.tools) or "araç yok: model yalnız yazar",
                     group="Hazır paketler",
@@ -630,7 +630,7 @@ class ChatSession:
             )
             toggles = tuple(
                 Choice(
-                    base + "".join(f"+{x}" for x in LAYERS if (x in layers_on) != (x == layer)),
+                    compose(base, set(layers_on) ^ {layer}),
                     f"{layer} · {'açık' if layer in layers_on else 'kapalı'}",
                     description,
                     group="Ek katmanlar (seçince açılır/kapanır)",

@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 
 from harness.tools.base import Tool, ToolError, ToolOutput, resolve_inside
 
+MAX_LINES = 2000
+MAX_CHARS = 30_000  # çıktı sınırının (40.000) altında: okunan dosya ortadan kesilmez
+MAX_LINE_CHARS = 2000  # tek satırlık dev dosyalar (sıkıştırılmış JS) bütçeyi yemesin
+
 
 class ReadFileParams(BaseModel):
     path: str = Field(description="Çalışma dizinine göre dosya yolu")
@@ -15,7 +19,11 @@ class ReadFileParams(BaseModel):
 
 class ReadFile(Tool[ReadFileParams]):
     name = "read_file"
-    description = "Bir metin dosyasını satır numaralarıyla okur."
+    description = (
+        "Bir metin dosyasını satır numaralarıyla okur. Bir seferde en çok "
+        f"{MAX_LINES} satır ve ~{MAX_CHARS // 1000}.000 karakter gelir; devamı varsa "
+        "sonuç bir sonraki start_line'ı söyler."
+    )
     params_model = ReadFileParams
     category = "read"
 
@@ -37,21 +45,37 @@ class ReadFile(Tool[ReadFileParams]):
             raise ToolError(f"{params.path}: metin dosyası değil (UTF-8 okunamadı).") from e
 
         start = params.start_line or 1
-        end = params.end_line or len(lines)
+        end = min(params.end_line or len(lines), len(lines))
         width = len(str(end))
-        shown = lines[start - 1 : end]
-        content = "\n".join(
-            f"{number:>{width}}  {line}" for number, line in enumerate(shown, start=start)
-        )
-        partial = f" / {len(lines)}" if len(shown) < len(lines) else ""
+        rows: list[str] = []
+        size = 0
+        for number in range(start, end + 1):
+            line = lines[number - 1]
+            if len(line) > MAX_LINE_CHARS:
+                line = f"{line[:MAX_LINE_CHARS]} … [satır {len(line)} karakter, kısaltıldı]"
+            row = f"{number:>{width}}  {line}"
+            if rows and (len(rows) >= MAX_LINES or size + len(row) + 1 > MAX_CHARS):
+                break
+            rows.append(row)
+            size += len(row) + 1
+        last = start + len(rows) - 1
+        content = "\n".join(rows)
+        cut = last < end
+        if cut:  # bütçe doldu: modelin tahmin etmesi yerine devamın nerede olduğu söylenir
+            content += (
+                f"\n\n[dosya {len(lines)} satır; {start}–{last} gösterildi. "
+                f"Devamı için start_line={last + 1}]"
+            )
+        partial = f" / {len(lines)}" if len(rows) < len(lines) else ""
         return ToolOutput(
             content,
-            summary=f"{len(shown)} satır{partial}",
+            summary=f"{len(rows)} satır{partial}" + (" · bütçe doldu" if cut else ""),
             details={
                 "path": params.path,
-                "lines": len(shown),
+                "lines": len(rows),
                 "total_lines": len(lines),
                 "start": start,  # gerçekte gösterilen aralık (istenen değil): harita şeridi
-                "end": start + len(shown) - 1,
+                "end": last,
+                "cut": cut,
             },
         )

@@ -26,7 +26,10 @@ from harness.tools.search import SKIPPED_DIRS
 _POLL_SECONDS = 0.25
 _HEARTBEAT_SECONDS = 10.0
 _TREE_LIMIT = 3000
-_STATIC = {"/map.js": ("watch_map.js", "text/javascript; charset=utf-8")}
+_STATIC = {
+    "/map.js": ("watch_map.js", "text/javascript; charset=utf-8"),
+    "/ledger.js": ("watch_ledger.js", "text/javascript; charset=utf-8"),
+}
 
 
 def log_root(log: Path) -> str | None:

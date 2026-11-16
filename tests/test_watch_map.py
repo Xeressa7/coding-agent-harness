@@ -83,6 +83,8 @@ def test_project_tree_lists_todays_folder_without_hidden_and_tool_dirs(tmp_path:
         assert httpx.get(base + "api/tree?path=../k.jsonl").status_code == 404
         script = httpx.get(base + "map.js")
         assert script.status_code == 200 and "HarnessMap" in script.text
+        ledger = httpx.get(base + "ledger.js")
+        assert ledger.status_code == 200 and "HarnessLedger" in ledger.text
     finally:
         server.close()
 

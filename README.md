@@ -52,8 +52,16 @@ yazdıkça süzülen bir pencere (↑/↓, Enter, Esc), sade akışta numaralı 
   `/disconnect <ad>` kaydı siler.
 - `/effort`, `/anatomy`, `/resume` (`/sessions`): aynı biçimde liste ya da ad.
 - `/watch`: canlı paneli tarayıcıda açar. Sohbet terminalde sürer, panel aynı
-  kaydı okuyup akıtır (modele giden bağlam, düşünce, araçlar, token ve önbellek
-  payı); hiçbir şey kaybolmaz, onaylar terminalde verilir.
+  kaydı okuyup akıtır; hiçbir şey kaybolmaz, onaylar terminalde verilir.
+  **Akış** sekmesi bir defterdir: üstte koşunun durumu (tamamlandı / adım sınırı /
+  hata) ve harness müdahaleleri, altında zaman çizelgesi (model çağrısı "ilk token
+  bekleme" ve "üretim" diye ikiye bölünür; araçlar, harness işaretleri ve her adımda
+  modele giden bağlamın boyutu; sürükleyince defter o aralığa süzülür). Defterde her
+  kayıt bir satırdır (adım adım); satıra tıklayınca sağdaki denetçide model satırı
+  için **Model ne gördü** (o adımda modele giden mesajların birebir kopyası, yeniler
+  işaretli, kesik sonuçlar etiketli), araç satırı için **Modele giden** ve kesildiyse
+  **Aracın tam çıktısı** ayrı sekmelerde. Eski kayıtlarda harness'ın sessizce kestiği
+  sonuçlar "sessiz kesme" diye görünür.
   **Harita** sekmesi ajanın proje ağacında nerede dolaştığını gösterir: okunan,
   aranan, düzenlenen dosyalar sırayla yaylarla bağlanır, aramalar eşleştiği
   dosyalara kesik çizgiyle açılır, dosya yanındaki şerit okunan satır aralıklarını
@@ -110,12 +118,19 @@ aboneliği ister. `/model` listesi ve `harness models opencode-go` her modelin b
 | `bash` | 2 | `files` + `bash` |
 | `full` | 3 | `bash` + `fetch_url` |
 
+Varsayılan `bash`'tir (standart harness: komut çalıştırır, her çağrıda izin sorar).
+`read_file` bir seferde en çok 2.000 satır / ~30.000 karakter verir ve devamın
+`start_line`'ını söyler.
+
 Paketin üstüne ek katmanlar `+ad` ile açılır, `-ad` ile kapanır (`bash+loop_guard`;
 sohbette `/anatomy` listesinde tek tıkla):
 
 | Katman | Ne yapar |
 |---|---|
 | `loop_guard` | Aynı araç aynı argümanlarla art arda 3. kez çağrılınca sonuca hatırlatma ekler, 5.'de çağrıyı çalıştırmaz |
+| `output_limit` (açık) | 40.000 karakteri aşan araç çıktısının ortasını keser; modele söyler, tam çıktı kayıtta kalır (`-output_limit` kapatır) |
+| `agents_md` (açık) | Projedeki `AGENTS.md`'yi (yoksa `CLAUDE.md`, `@dosya` satırları izlenir) sistem talimatına ekler |
+| `memory` | agent-context hafızası (`ctx`): görev başında not haritası talimata girer, dosya okunup yazılınca o dosyayı anan notlar sonuca eklenir. `ctx` ya da `context.yaml` yoksa çalışmadığını söyler |
 
 Her araya giriş `HarnessIntervened` olayı olarak kayda geçer; `/usage`, inceleme
 sayfası, canlı panel ve `harness eval` "harness kaç kez müdahale etti" sorusunu

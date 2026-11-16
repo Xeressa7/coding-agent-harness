@@ -225,7 +225,7 @@ def test_eval_command_runs_the_matrix_and_report_rereads_it(
     )
     assert result.exit_code == 0, result.output
     assert "1 görev × 2 varyant × 2 tekrar = 4 koşu" in result.output
-    assert "opencode-go/iyi · files" in result.output and "2/2 (%100)" in result.output
+    assert "opencode-go/iyi · bash" in result.output and "2/2 (%100)" in result.output
     assert "0/2 (%0)" in result.output
 
     (out,) = (tmp_path / "harness-evals").iterdir()

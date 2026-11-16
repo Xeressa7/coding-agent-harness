@@ -20,6 +20,7 @@ SKIPPED_DIRS = {
     "node_modules",
     "__pycache__",
     ".pytest_cache",
+    ".import_linter_cache",
     ".ruff_cache",
     ".mypy_cache",
 }

@@ -1,38 +1,34 @@
-"""Bağlam yöneticisi: ContextManager (rapor Bölüm 19).
+"""Çıktı sınırı: uzun araç sonucunun ortasını keser (anatomi katmanı `output_limit`).
 
-Uzun araç çıktılarını kırpar (baş ve son korunur, orta atılır, modele
-kısaltıldığı söylenir) ve mesaj geçmişinin modelin bağlam penceresini
-aşmasını önler.
+Sonuç geçmişe EKLENİRKEN bir kez kesilir; kesildiyse ajan `HarnessIntervened`
+yazar ve aracın tam çıktısını `ToolFinished.full_content`'te saklar. Böylece
+modelin gördüğü (kayıttaki `result`) ile aracın döndürdüğü ayrı ayrı görünür.
+
+Sınır bilerek geniştir: read_file kendi bütçesiyle (satır/karakter) sonucunu
+zaten bu sınırın altında tutar; kesme ancak dev bash çıktısı gibi durumlarda
+çalışır. Önceki sürüm her sonucu 2.000 + 2.000 karaktere sessizce kesiyordu ve
+modeli aynı dosyayı çakışan aralıklarla tekrar okumaya itiyordu.
 """
 
-from collections.abc import Sequence
-
-from harness.messages import Message, ToolResult
+OUTPUT_LIMIT_CHARS = 40_000
 
 
-def _truncate_text(text: str, head_chars: int = 2000, tail_chars: int = 2000) -> str:
-    """Uzun bir metni baş ve sonunu koruyarak kırpar, ortasını atar.
+def grouped(number: int) -> str:
+    return f"{number:,}".replace(",", ".")
 
-    Metin `head_chars + tail_chars`'tan kısaysa dokunmadan döner.
+
+def limit_output(text: str, limit: int = OUTPUT_LIMIT_CHARS) -> str | None:
+    """Sınırı aşan metnin baş ve sonunu tutar, ortayı atar; sığıyorsa None.
+
+    Modele kesildiği ve ne kadar atıldığı söylenir, tahmin ettirilmez.
     """
-    if len(text) <= head_chars + tail_chars:
-        return text
-
-    omitted = len(text) - head_chars - tail_chars
-    head = text[:head_chars]
-    tail = text[-tail_chars:]
-    return f"{head}\n\n… [{omitted} karakter kısaltıldı] …\n\n{tail}"
-
-
-def truncated_history(
-    history: Sequence[Message], head_chars: int = 2000, tail_chars: int = 2000
-) -> list[Message]:
-    """Geçmişteki araç sonuçlarının içeriğini kırpar; diğer mesajlara dokunmaz."""
-    result: list[Message] = []
-    for message in history:
-        if isinstance(message, ToolResult):
-            message = message.model_copy(
-                update={"content": _truncate_text(message.content, head_chars, tail_chars)}
-            )
-        result.append(message)
-    return result
+    if len(text) <= limit:
+        return None
+    head = text[: limit // 2]
+    tail = text[-(limit // 2) :]
+    omitted = len(text) - len(head) - len(tail)
+    note = (
+        f"[harness: çıktı {grouped(len(text))} karakterdi; ortadaki {grouped(omitted)} karakter "
+        "atıldı. Gerekirse daha dar bir aralık ya da filtreyle yeniden iste.]"
+    )
+    return f"{head}\n\n{note}\n\n{tail}"

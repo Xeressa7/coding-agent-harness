@@ -118,7 +118,7 @@ def test_model_flag_can_name_the_provider_for_one_run(saved: Path) -> None:
         "chatgpt",
         "gpt-6-sol",
         "high",
-        "files",
+        "bash",
     )
     assert cli.resolve_config("gpt-6-sol", None, None).effort == "high"
     assert cli.resolve_config("gpt-6-luna", None, None).effort is None
