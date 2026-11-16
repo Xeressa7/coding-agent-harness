@@ -114,14 +114,25 @@ class Agent:
         blocks: list[str] = []
         now = datetime.now
         if self._layers.agents_md and self._root is not None:
-            found = load_instructions(self._root, drop_memory_index=self._memory is not None)
-            if found is not None:
+            found = load_instructions(self._root)
+            # ctx'in hafıza bölümü memory katmanına ait; bu katman onu hiç taşımaz.
+            split = f"hafıza bölümü ({grouped(found.memory_chars)}) ayrıldı" if found else ""
+            if found is not None and found.text:
                 blocks.append(f"# Proje talimatı ({found.source})\n\n{found.text}")
+                summary = f"{found.source} · {grouped(len(found.text))} karakter"
                 yield HarnessIntervened(
                     step=0,
                     layer="agents_md",
                     action="inject",
-                    summary=f"{found.source} · {grouped(len(found.text))} karakter",
+                    summary=f"{summary} · {split}" if found.memory_chars else summary,
+                    timestamp=now(UTC),
+                )
+            elif found is not None:
+                yield HarnessIntervened(
+                    step=0,
+                    layer="agents_md",
+                    action="skip",
+                    summary=f"{found.source} yalnız ctx hafıza bölümünden oluşuyor · {split}",
                     timestamp=now(UTC),
                 )
         if self._memory is not None:

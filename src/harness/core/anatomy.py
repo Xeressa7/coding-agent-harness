@@ -95,7 +95,7 @@ DEFAULT_PRESET = "bash"  # standart harness: komut çalıştırır, her çağrı
 LAYERS: dict[str, str] = {
     "loop_guard": "aynı araç çağrısı art arda 3 kez gelince modeli uyarır, 5'te durdurur",
     "output_limit": "40.000 karakteri aşan araç çıktısının ortasını keser, modele ve kayda söyler",
-    "agents_md": "projedeki AGENTS.md'yi (yoksa CLAUDE.md) sistem talimatına ekler",
+    "agents_md": "projedeki AGENTS.md'yi (yoksa CLAUDE.md) talimata ekler; ctx hafıza bölümü hariç",
     "memory": "agent-context hafızası: görev başında not haritası, dosya okununca ilgili notlar",
 }
 

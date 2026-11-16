@@ -17,6 +17,8 @@ from harness.messages import AssistantMessage, SystemMessage, ToolCall
 pytestmark = pytest.mark.anyio
 
 INDEX = "<!-- ctx:index:basla -->\nESKİ HARİTA\n<!-- ctx:index:bitir -->"  # ctx'in AGENTS.md bloğu
+# `ctx init`'in AGENTS.md'ye yazdığı bölümün biçimi (agent-context: templates/AGENTS-router.md)
+ROUTER = f"## Hafıza\n\nGöreve başlamadan .memory'de ara.\n\n{INDEX}"
 
 
 def test_agents_md_is_read_and_claude_md_import_is_followed(tmp_path: Path) -> None:
@@ -26,13 +28,25 @@ def test_agents_md_is_read_and_claude_md_import_is_followed(tmp_path: Path) -> N
 
     found = load_instructions(tmp_path)
     assert found is not None and found.source == "AGENTS.md"
-    assert "Testleri koş." in found.text and "ESKİ HARİTA" in found.text
-    dropped = load_instructions(tmp_path, drop_memory_index=True)
-    assert dropped is not None and "ESKİ HARİTA" not in dropped.text  # taze harita gelecek
+    assert "Testleri koş." in found.text and "ESKİ HARİTA" not in found.text
 
     (tmp_path / "AGENTS.md").unlink()
     via_claude = load_instructions(tmp_path)
     assert via_claude is not None and via_claude.source == "CLAUDE.md"  # @ dosyası yok: satır kalır
+
+
+def test_ctx_memory_section_is_split_off_and_the_rest_is_kept(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text(
+        f"# Proje\n\nTürkçe yaz.\n\n{ROUTER}\n\n## Test\n\npytest koş.\n", encoding="utf-8"
+    )
+    found = load_instructions(tmp_path)
+    assert found is not None
+    assert found.text == "# Proje\n\nTürkçe yaz.\n\n## Test\n\npytest koş."
+    assert found.memory_chars == len(ROUTER)
+
+    (tmp_path / "AGENTS.md").write_text(ROUTER, encoding="utf-8")  # yalnız `ctx init` bölümü
+    only_memory = load_instructions(tmp_path)
+    assert only_memory is not None and only_memory.text == ""
 
 
 def test_import_outside_the_project_is_not_followed(tmp_path: Path) -> None:
@@ -84,6 +98,23 @@ async def test_agents_md_layer_adds_the_file_to_the_system_prompt_and_records_it
     assert notes(events) == [] and "Türkçe yaz." not in system_seen(events)
 
 
+async def test_memory_rules_in_agents_md_do_not_reach_the_model_when_memory_is_off(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "AGENTS.md").write_text(f"Türkçe yaz.\n\n{ROUTER}", encoding="utf-8")
+
+    _, events = await run(tmp_path, "files")
+
+    seen = system_seen(events)
+    assert "Türkçe yaz." in seen and ".memory" not in seen and "ESKİ HARİTA" not in seen
+    [note] = [e for e in events if isinstance(e, HarnessIntervened)]
+    assert note.summary.endswith(f"hafıza bölümü ({len(ROUTER)}) ayrıldı")
+
+    (tmp_path / "AGENTS.md").write_text(ROUTER, encoding="utf-8")  # bu repodaki durum
+    _, events = await run(tmp_path, "files")
+    assert notes(events) == [(0, "agents_md", "skip")] and ".memory" not in system_seen(events)
+
+
 async def test_project_context_is_added_once_per_agent(tmp_path: Path) -> None:
     (tmp_path / "AGENTS.md").write_text("Türkçe yaz.", encoding="utf-8")
     agent, _ = await run(tmp_path, "files")
@@ -114,7 +145,7 @@ async def test_memory_layer_injects_the_map_and_recalls_notes_for_touched_files(
     tmp_path: Path, fake_ctx: list[tuple[list[str], dict[str, object]]]
 ) -> None:
     (tmp_path / "context.yaml").write_text("memory_path: .memory\n", encoding="utf-8")
-    (tmp_path / "AGENTS.md").write_text(f"Kural.\n{INDEX}", encoding="utf-8")
+    (tmp_path / "AGENTS.md").write_text(f"Kural.\n\n{ROUTER}", encoding="utf-8")
 
     _, events = await run(tmp_path, "files+memory")
 
@@ -125,6 +156,7 @@ async def test_memory_layer_injects_the_map_and_recalls_notes_for_touched_files(
     ]
     seen = system_seen(events)
     assert "HAFIZA HARİTASI" in seen and "ESKİ HARİTA" not in seen  # bayat blok yerine taze
+    assert "Göreve başlamadan" not in seen  # hafızanın kurallarını ctx'in kancası verir
     finished = next(e for e in events if isinstance(e, ToolFinished))
     assert finished.summary == "a.py"  # aracın kendi anlatımı, hafıza özetiyle ezilmez
     result = finished.result.content

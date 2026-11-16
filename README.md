@@ -139,8 +139,8 @@ sohbette `/anatomy` listesinde tek tıkla):
 |---|---|
 | `loop_guard` | Aynı araç aynı argümanlarla art arda 3. kez çağrılınca sonuca hatırlatma ekler, 5.'de çağrıyı çalıştırmaz |
 | `output_limit` (açık) | 40.000 karakteri aşan araç çıktısının ortasını keser; modele söyler, tam çıktı kayıtta kalır (`-output_limit` kapatır) |
-| `agents_md` (açık) | Projedeki `AGENTS.md`'yi (yoksa `CLAUDE.md`, `@dosya` satırları izlenir) sistem talimatına ekler |
-| `memory` | agent-context hafızası (`ctx`): görev başında not haritası talimata girer, dosya okunup yazılınca o dosyayı anan notlar sonuca eklenir. `ctx` ya da `context.yaml` yoksa çalışmadığını söyler |
+| `agents_md` (açık) | Projedeki `AGENTS.md`'yi (yoksa `CLAUDE.md`, `@dosya` satırları izlenir) sistem talimatına ekler. `ctx init`'in yazdığı hafıza bölümü (harita bloğunu taşıyan başlık) bu katmana girmez; o bölüm `memory` katmanına aittir |
+| `memory` | agent-context hafızası (`ctx`): görev başında ctx'in kendi kancası haritayı ve kullanım kurallarını talimata ekler, dosya okunup yazılınca o dosyayı anan notlar sonuca eklenir. Kapalıyken modele hafızadan hiç söz edilmez. `ctx` ya da `context.yaml` yoksa çalışmadığını söyler |
 
 Her araya giriş `HarnessIntervened` olayı olarak kayda geçer; `/usage`, inceleme
 sayfası, canlı panel ve `harness eval` "harness kaç kez müdahale etti" sorusunu

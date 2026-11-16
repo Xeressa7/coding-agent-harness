@@ -28,13 +28,13 @@
   const LAYER_HELP = {
     loop_guard: "Aynı araç çağrısı art arda gelince harness modeli uyarır ya da çağrıyı durdurur.",
     output_limit: "40.000 karakteri aşan araç çıktısının ortası kesilir; model kesildiğini sonuçtan okur.",
-    agents_md: "Projedeki AGENTS.md (yoksa CLAUDE.md) sistem talimatının sonuna eklenir.",
+    agents_md: "Projedeki AGENTS.md (yoksa CLAUDE.md) sistem talimatının sonuna eklenir; ctx'in hafıza bölümü ayrılır (o bölüm hafıza katmanına ait).",
     memory: "agent-context: görev başında not haritası, dosya okunup yazılınca o dosyayı anan notlar.",
     code_blocks: "Seviye 0: modelin cevabındaki adlı kod bloklarını harness dosyaya yazar.",
   };
   const ACTIONS = {
     warn: "modele hatırlatıldı", block: "çağrı çalıştırılmadı", truncate: "ortası kesildi",
-    inject: "talimata eklendi", recall: "sonuca not eklendi", skip: "çalışmadı",
+    inject: "talimata eklendi", recall: "sonuca not eklendi", skip: "bir şey eklemedi",
   };
   // Eski kayıtlarda harness her araç sonucunu 2.000+2.000 karaktere sessizce kesiyordu.
   const OLD_CUT = /… \[\d+ karakter kısaltıldı\] …/;

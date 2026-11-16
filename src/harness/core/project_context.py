@@ -10,6 +10,12 @@ olarak kaydeder ve eklenen metin `ContextAssembled`'da birebir görünür.
   okunduğunda/yazıldığında `ctx hook recall` (o dosyayı anan notlar). Hafızanın
   kuralları ctx'te kalır; harness yalnız taşır. ctx kurulu değilse ya da projede
   `context.yaml` yoksa katman hiçbir şey eklemez ve bunu söyler.
+
+İki katman birbirine karışmaz: `ctx init`'in AGENTS.md'ye yazdığı hafıza bölümü
+(haritayı taşıyan başlık + `ctx:index` bloğu) `agents_md` katmanına hiç girmez.
+Hafıza kapalıyken modele hafızadan söz edilmez; açıkken kuralları ve taze haritayı
+ctx'in kendi kancası verir. AGENTS.md'ye dokunmadan iki katman ayrı ayrı açılıp
+kapanır ve farkları ölçülebilir.
 """
 
 import asyncio
@@ -23,18 +29,38 @@ from pathlib import Path
 INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
 MAX_INSTRUCTION_CHARS = 20_000
 CTX_TIMEOUT_SECONDS = 10
-# ctx'in AGENTS.md'ye yazdığı harita bloğu: hafıza katmanı açıkken taze haritayla çakışmasın.
-_INDEX_BLOCK = re.compile(r"<!-- ctx:index:basla -->.*?<!-- ctx:index:bitir -->", re.DOTALL)
+# ctx'in AGENTS.md'ye yazdığı bölüm: haritayı taşıyan başlık (şablonda "## Hafıza") ve
+# işaretli harita bloğu. Bölümün başı = bloktan önceki son başlık, sonu = blok sonu.
+_INDEX_START = "<!-- ctx:index:basla -->"
+_INDEX_END = "<!-- ctx:index:bitir -->"
+_HEADING = re.compile(r"^#{1,6} ", re.MULTILINE)
 
 
 @dataclass(frozen=True)
 class Instructions:
     source: str  # "AGENTS.md" ya da "CLAUDE.md → AGENTS.md"
     text: str
+    memory_chars: int = 0  # ayrılan ctx hafıza bölümünün boyu (0: bölüm yoktu)
 
 
-def load_instructions(root: Path, *, drop_memory_index: bool = False) -> Instructions | None:
-    """Projenin ajan talimatı; yoksa None. Çok uzunsa kesilir ve bu söylenir."""
+def split_memory_section(text: str) -> tuple[str, str]:
+    """AGENTS.md metnini (talimat, ctx hafıza bölümü) diye ayırır; bölüm yoksa ikincisi boş."""
+    start = text.find(_INDEX_START)
+    end = text.find(_INDEX_END, start)
+    if start < 0 or end < 0:
+        return text, ""
+    end += len(_INDEX_END)
+    headings = [m.start() for m in _HEADING.finditer(text, 0, start)]
+    begin = headings[-1] if headings else start
+    return text[:begin].rstrip() + "\n\n" + text[end:].lstrip(), text[begin:end]
+
+
+def load_instructions(root: Path) -> Instructions | None:
+    """Projenin ajan talimatı, ctx hafıza bölümü ayrılmış; dosya yoksa None.
+
+    Dosya yalnız ctx bölümünden oluşuyorsa `text` boş döner (katman bunu söyler).
+    Çok uzunsa kesilir ve bu metne yazılır.
+    """
     for name in INSTRUCTION_FILES:
         path = root / name
         if not path.is_file():
@@ -56,13 +82,13 @@ def load_instructions(root: Path, *, drop_memory_index: bool = False) -> Instruc
                 source = f"{name} → {target}"
             else:
                 lines.append(line)
-        text = "\n".join(lines)
-        if drop_memory_index:
-            text = _INDEX_BLOCK.sub("(hafıza haritası aşağıda, hafıza katmanından)", text)
+        text, memory = split_memory_section("\n".join(lines))
         text = text.strip()
         if len(text) > MAX_INSTRUCTION_CHARS:
             text = text[:MAX_INSTRUCTION_CHARS] + f"\n\n[{name} kesildi: ilk 20.000 karakter]"
-        return Instructions(source=source, text=text) if text else None
+        if not text and not memory:
+            return None
+        return Instructions(source=source, text=text, memory_chars=len(memory))
     return None
 
 

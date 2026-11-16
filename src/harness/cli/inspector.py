@@ -58,7 +58,7 @@ _ACTIONS = {
     "truncate": "ortası kesildi, modele söylendi",
     "inject": "sistem talimatına eklendi",
     "recall": "sonuca not eklendi",
-    "skip": "çalışmadı",
+    "skip": "bir şey eklemedi",
 }
 
 
