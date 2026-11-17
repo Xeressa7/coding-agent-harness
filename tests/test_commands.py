@@ -507,6 +507,16 @@ async def test_memory_session_id_survives_rebuilds_but_not_a_new_session(tmp_pat
     assert memory_id() != first
 
 
+async def test_step_limit_is_configurable_and_survives_rebuilds(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    assert session.agent._max_steps == 50  # type: ignore[attr-defined]  # varsayılan
+    session.max_steps = 200  # `harness --max-steps 200`
+    await session.run("/anatomy bash")  # ajan yeniden kurulur
+    assert session.agent._max_steps == 200  # type: ignore[attr-defined]
+    help_text = CliRunner().invoke(cli.app, ["--help"], env={"COLUMNS": "200"}).output
+    assert "--max-steps" in help_text
+
+
 async def test_address_giving_commands_stay_in_a_window(tmp_path: Path) -> None:
     session, _ = make_session(tmp_path)
     await turn(session, "selam")

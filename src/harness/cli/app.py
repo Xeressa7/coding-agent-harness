@@ -20,7 +20,7 @@ import sys
 import threading
 from collections.abc import Callable, Coroutine
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -35,6 +35,7 @@ from rich.text import Text
 from rich.theme import ThemeStackError
 
 from harness.cli.commands import (
+    CHAT_STEP_LIMIT,
     DEFAULT_EFFORT_WORDS,
     STEP_LIMIT_HINT,
     ChatSession,
@@ -192,6 +193,7 @@ class RunConfig:
     model: str
     effort: str | None
     anatomy: Anatomy
+    max_steps: int = CHAT_STEP_LIMIT
 
     @property
     def label(self) -> str:
@@ -274,6 +276,7 @@ def chat_session(root: Path, config: RunConfig, http: httpx.AsyncClient) -> Chat
         login=chatgpt_login,
         open_url=open_in_browser,
         theme=load_settings().theme,
+        max_steps=config.max_steps,
     )
 
 
@@ -354,6 +357,12 @@ def root_command(
     anatomy_name: AnatomyOption = None,
     allow: AllowOption = None,
     plain: PlainOption = False,
+    max_steps: Annotated[
+        int,
+        typer.Option(
+            "--max-steps", min=1, help=f"Tur başı adım sınırı (varsayılan {CHAT_STEP_LIMIT})"
+        ),
+    ] = CHAT_STEP_LIMIT,
     show_version: Annotated[
         bool,
         typer.Option(
@@ -365,7 +374,7 @@ def root_command(
     use_theme(load_settings().theme)
     if ctx.invoked_subcommand is not None:
         return
-    config = resolve_config(model, effort, anatomy_name)
+    config = replace(resolve_config(model, effort, anatomy_name), max_steps=max_steps)
     if prompt is not None:
         run_once(prompt, config, quiet=True, resume=continue_, allow=allow)
     else:

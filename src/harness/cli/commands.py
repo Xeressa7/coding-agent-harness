@@ -239,8 +239,10 @@ class ChatSession:
         login: LoginRunner | None = None,
         open_url: Callable[[str], None] | None = None,
         theme: str | None = None,
+        max_steps: int = CHAT_STEP_LIMIT,
     ) -> None:
         self.root = root
+        self.max_steps = max_steps  # tur başı adım sınırı (döngüye giren modele karşı bütçe)
         self.anatomy: Anatomy = anatomy
         self.provider: Provider = provider
         self.model: str = model
@@ -284,7 +286,7 @@ class ChatSession:
             anatomy=self.anatomy,
             root=self.root,
             history=history,
-            max_steps=CHAT_STEP_LIMIT,
+            max_steps=self.max_steps,
             # Kimlik oturum kaydına bağlı: model/katman değişince aynı kalır, /new ile yenilenir,
             # /resume eski oturumun kimliğine döner (ctx o notları zaten verdiğini bilir).
             memory_session_id=self.log.path.stem,
