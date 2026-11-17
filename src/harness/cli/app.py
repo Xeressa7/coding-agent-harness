@@ -303,19 +303,17 @@ async def chatgpt_login(on_url: Callable[[str], None]) -> str | None:
 
 
 def grant(session: ChatSession, allow: list[str] | None) -> None:
-    """`--allow`: verilen araçlar bu oturumda sormadan çalışır (yol denetimi yine geçerli)."""
+    """`--allow`: verilen araçlar bu çalıştırmada sormadan çalışır (yol denetimi yine geçerli).
+
+    Oturum kaydı devam (`-c`, `/resume`) ya da anatomi değişse de izin korunur."""
     names = [spec.name for spec in session.tools.specs()]
     for name in allow or []:
-        if name == "all":
-            for known in names:
-                session.permissions.grant(known)
-        elif name in names:
-            session.permissions.grant(name)
-        else:
+        if name != "all" and name not in names:
             raise typer.BadParameter(
                 f"'{name}' bu anatomide yok. Var olanlar: {', '.join(names) or '—'}",
                 param_hint="--allow",
             )
+    session.allow(list(allow or []))
 
 
 def run_async[T](make: Callable[[], Coroutine[Any, Any, T]]) -> T:

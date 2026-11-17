@@ -25,6 +25,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 INSTRUCTION_FILES = ("AGENTS.md", "CLAUDE.md")
 MAX_INSTRUCTION_CHARS = 20_000
@@ -108,7 +109,20 @@ def _run_ctx(command: str, args: list[str], payload: dict[str, object], cwd: Pat
         timeout=CTX_TIMEOUT_SECONDS,
         check=False,
     )
+    if done.returncode != 0:
+        # Hata metni not gibi modele gitmesin: başarısız ctx çıktısı hiç kullanılmaz.
+        why = (done.stderr or done.stdout).strip().splitlines()
+        raise MemoryUnavailable(
+            f"ctx {' '.join(args)} hata verdi ({done.returncode})" + (f": {why[-1]}" if why else "")
+        )
     return done.stdout
+
+
+def _field(data: object, key: str) -> object:
+    """JSON nesnesinin alanı; nesne değilse ya da alan yoksa None."""
+    if not isinstance(data, dict):
+        return None
+    return cast("dict[str, object]", data).get(key)
 
 
 class MemoryUnavailable(Exception):
@@ -140,10 +154,12 @@ class CtxMemory:
         if not out.strip():
             return None
         try:
-            data = json.loads(out)
+            data: object = json.loads(out)
         except json.JSONDecodeError:
             return out.strip()
-        extra = data.get("hookSpecificOutput", {}).get("additionalContext")
+        # Beklenmeyen biçim (liste, null, sayı…) çökertmez: not yok sayılır.
+        specific = _field(data, "hookSpecificOutput")
+        extra = _field(specific, "additionalContext")
         return extra.strip() if isinstance(extra, str) and extra.strip() else None
 
     async def index(self) -> str | None:

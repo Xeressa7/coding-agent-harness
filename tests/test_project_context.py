@@ -1,10 +1,12 @@
 """Proje bağlamı katmanları: AGENTS.md talimatı ve agent-context hafızası (ctx)."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
+from harness.core import agent as agent_module
 from harness.core import project_context
 from harness.core.agent import Agent
 from harness.core.anatomy import get_preset
@@ -59,8 +61,10 @@ def test_import_outside_the_project_is_not_followed(tmp_path: Path) -> None:
     assert found is not None and "SIR" not in found.text
 
 
-async def run(tmp_path: Path, anatomy_name: str) -> tuple[Agent, list[Event]]:
-    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+async def run(
+    tmp_path: Path, anatomy_name: str, source: str = "x = 1\n"
+) -> tuple[Agent, list[Event]]:
+    (tmp_path / "a.py").write_text(source, encoding="utf-8")
     anatomy = get_preset(anatomy_name)
     tools = anatomy.tool_registry(tmp_path)
     call = ToolCall(id="c1", name="read_file", arguments='{"path": "a.py"}')
@@ -165,6 +169,97 @@ async def test_memory_layer_injects_the_map_and_recalls_notes_for_touched_files(
     assert recall["tool_name"] == "Read"
     assert str(recall["tool_input"]).endswith("a.py'}")  # ctx'e mutlak yol gider
     assert recall["session_id"] == fake_ctx[0][1]["session_id"]  # aynı not iki kez gelmesin
+
+
+async def test_raw_level_stays_a_bare_model_even_with_agents_md(tmp_path: Path) -> None:
+    (tmp_path / "AGENTS.md").write_text("Türkçe yaz.", encoding="utf-8")
+    assert get_preset("raw").agents_md is False
+    _, events = await run(tmp_path, "raw")
+    assert notes(events) == [] and "Türkçe yaz." not in system_seen(events)
+    _, events = await run(tmp_path, "raw+agents_md")  # istenirse açıkça eklenir
+    assert "Türkçe yaz." in system_seen(events)
+
+
+async def test_unexpected_ctx_output_is_ignored_and_a_failing_ctx_is_not_a_note(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "context.yaml").write_text("memory_path: .memory\n", encoding="utf-8")
+    real_run_ctx = project_context._run_ctx  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(project_context, "ctx_command", lambda: "ctx")
+    for out in ("null", "[1]", "3", '{"hookSpecificOutput": null}', '{"hookSpecificOutput": []}'):
+
+        def prints(*_: object, out: str = out) -> str:
+            return out
+
+        monkeypatch.setattr(project_context, "_run_ctx", prints)
+        assert await project_context.CtxMemory(tmp_path, "s").index() is None, out
+
+    script = "import sys; print('HATA: bozuk depo'); sys.exit(2)"
+    with pytest.raises(project_context.MemoryUnavailable, match="bozuk depo"):
+        real_run_ctx(sys.executable, ["-c", script], {}, tmp_path)
+
+
+async def test_a_failing_recall_turns_the_memory_layer_off_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "context.yaml").write_text("memory_path: .memory\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def run_ctx(command: str, args: list[str], payload: dict[str, object], cwd: Path) -> str:
+        calls.append(args)
+        if args == ["hook", "index"]:
+            return json.dumps({"hookSpecificOutput": {"additionalContext": "HARİTA"}})
+        raise project_context.MemoryUnavailable("ctx hook recall çalışmadı: zaman aşımı")
+
+    monkeypatch.setattr(project_context, "ctx_command", lambda: "ctx")
+    monkeypatch.setattr(project_context, "_run_ctx", run_ctx)
+    anatomy = get_preset("files+memory")
+    tools = anatomy.tool_registry(tmp_path)
+    read = '{"path": "a.py"}'
+    agent = Agent(
+        ScriptedLLM(
+            [
+                AssistantMessage(tool_calls=(ToolCall(id="c1", name="read_file", arguments=read),)),
+                AssistantMessage(tool_calls=(ToolCall(id="c2", name="read_file", arguments=read),)),
+                AssistantMessage(text="bitti"),
+            ]
+        ),
+        tools,
+        "talimat",
+        permissions=PermissionManager(tmp_path, tools),
+        anatomy=anatomy,
+        root=tmp_path,
+    )
+    events = [event async for event in agent.run("bak")]
+
+    assert calls.count(["hook", "recall"]) == 1  # ikinci okumada yeniden beklenmedi
+    assert notes(events) == [(0, "memory", "inject"), (1, "memory", "skip")]
+    skip = [e for e in events if isinstance(e, HarnessIntervened)][-1]
+    assert "zaman aşımı" in skip.summary and skip.call_id == "c1"
+
+
+async def test_harness_notes_are_added_after_the_output_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_ctx: list[tuple[list[str], dict[str, object]]],
+) -> None:
+    (tmp_path / "context.yaml").write_text("memory_path: .memory\n", encoding="utf-8")
+    real = agent_module.limit_output
+
+    def tiny_limit(text: str) -> str | None:
+        return real(text, limit=60)
+
+    monkeypatch.setattr(agent_module, "limit_output", tiny_limit)
+    source = "".join(f"satir_{i} = {i}\n" for i in range(40))
+
+    _, events = await run(tmp_path, "files+memory", source)
+
+    finished = next(e for e in events if isinstance(e, ToolFinished))
+    assert finished.full_content is not None  # kesildi
+    assert "[harness" not in finished.full_content  # tam metin yalnız aracın çıktısı
+    assert finished.result.content.rstrip().endswith("a.py")  # not kesilmeden sonda
+    assert "[harness · hafıza]" in finished.result.content
 
 
 async def test_memory_layer_says_why_it_did_nothing(

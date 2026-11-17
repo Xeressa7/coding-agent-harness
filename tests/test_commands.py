@@ -2,6 +2,8 @@
 
 import asyncio
 import os
+import shutil
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -449,3 +451,63 @@ async def test_copy_export_memory_and_diff(tmp_path: Path) -> None:
     assert not session.anatomy.memory and off.text.startswith("Hafıza kapandı")
 
     assert "git deposu değil" in (await session.run("/diff")).text
+
+
+async def test_diff_lists_untracked_files_with_spaces_and_turkish_letters(tmp_path: Path) -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git yok")
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@t", "-C", str(tmp_path)]
+    subprocess.run([*git, "init", "-q"], check=True)
+    (tmp_path / "a.txt").write_text("1\n", encoding="utf-8")
+    subprocess.run([*git, "add", "a.txt"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "ilk"], check=True)
+    (tmp_path / "rapor özeti.md").write_text("x\n", encoding="utf-8")
+
+    session, _ = make_session(tmp_path)
+    reply = await session.run("/diff")
+    assert "`rapor özeti.md`" in reply.text and reply.view == "panel"
+
+
+async def test_allow_survives_new_session_resume_and_anatomy_change(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    cli.grant(session, ["write_file"])
+    write = ToolCall(id="w", name="write_file", arguments='{"path": "a.txt", "content": "x"}')
+    assert session.permissions.decide(write) is Decision.ALLOW
+    await turn(session, "selam")
+
+    await session.run("/new")
+    assert session.permissions.decide(write) is Decision.ALLOW
+    assert (await session.run("/resume selam")).reset
+    assert session.permissions.decide(write) is Decision.ALLOW
+    await session.run("/anatomy bash")
+    assert session.permissions.decide(write) is Decision.ALLOW
+    bash = ToolCall(id="b", name="bash", arguments='{"command": "dir"}')
+    assert session.permissions.decide(bash) is Decision.ASK  # yalnız verilen araç
+    assert session.agent.permissions is session.permissions  # ajan aynı izinleri kullanır
+
+    everything, _ = make_session(tmp_path)
+    cli.grant(everything, ["all"])
+    await everything.run("/anatomy bash")  # "all" yeni anatominin araçlarını da kapsar
+    assert everything.permissions.decide(bash) is Decision.ALLOW
+
+
+async def test_memory_session_id_survives_rebuilds_but_not_a_new_session(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    await session.run("/memory")
+
+    def memory_id() -> str:
+        memory = session.agent._memory  # type: ignore[attr-defined]
+        assert memory is not None
+        return memory._session_id  # type: ignore[no-any-return]
+
+    first = memory_id()
+    await session.run("/anatomy files+memory+loop_guard")  # ajan yeniden kurulur
+    assert memory_id() == first
+    await session.run("/new")
+    assert memory_id() != first
+
+
+async def test_address_giving_commands_stay_in_a_window(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    await turn(session, "selam")
+    assert (await session.run("/export notlar.md")).view == "panel"

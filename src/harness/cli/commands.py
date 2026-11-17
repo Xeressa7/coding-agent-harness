@@ -122,6 +122,9 @@ PANEL_COMMANDS = {
     "/tools": "Araçlar",
     "/usage": "Kullanım",
     "/diff": "Çalışma dizinindeki değişiklikler",
+    # Adres/yol veren komutlar: 8 sn'lik bildirimde kaybolmasın, pencerede kalsın.
+    "/watch": "Canlı panel",
+    "/export": "Dışa aktarma",
 }
 
 ALIASES = {
@@ -254,7 +257,11 @@ class ChatSession:
         self.sessions_dir = sessions_dir
         self.log = new_session_log(sessions_dir)
         self.tools: ToolRegistry = anatomy.tool_registry(root)
-        self.permissions = PermissionManager(root, self.tools)
+        # `--allow` ile açılışta verilen izinler ("all" dahil): her yeni izin yöneticisine
+        # (yeni oturum, devam, anatomi değişimi) yeniden uygulanır. Sohbet içinde verilen
+        # "hep izin ver" ise yalnız o izin yöneticisi yaşadıkça geçerlidir.
+        self.allowed: tuple[str, ...] = ()
+        self.permissions = self._new_permissions()
         self.agent = self._build_agent([])
 
     @property
@@ -278,10 +285,30 @@ class ChatSession:
             root=self.root,
             history=history,
             max_steps=CHAT_STEP_LIMIT,
+            # Kimlik oturum kaydına bağlı: model/katman değişince aynı kalır, /new ile yenilenir,
+            # /resume eski oturumun kimliğine döner (ctx o notları zaten verdiğini bilir).
+            memory_session_id=self.log.path.stem,
         )
 
     def _rebuild(self) -> None:
         self.agent = self._build_agent(self.agent.history[1:])
+
+    def allow(self, names: list[str]) -> None:
+        """`--allow`: araçlar bu çalıştırma boyunca sormadan çalışır (yol denetimi yine geçerli)."""
+        self.allowed = (*self.allowed, *names)
+        self._apply_allowed(self.permissions)
+
+    def _new_permissions(self) -> PermissionManager:
+        permissions = PermissionManager(self.root, self.tools)
+        self._apply_allowed(permissions)
+        return permissions
+
+    def _apply_allowed(self, permissions: PermissionManager) -> None:
+        names = self._tool_names()
+        for name in self.allowed:
+            for granted in names if name == "all" else [name]:
+                if granted in names:
+                    permissions.grant(granted)
 
     def _save(self) -> None:
         if self._save_choice is not None:
@@ -304,7 +331,7 @@ class ChatSession:
             case "/sessions":
                 return self._sessions(argument)
             case "/diff":
-                return CommandReply(self._diff())
+                return CommandReply(await self._diff())
             case "/copy":
                 return self._copy()
             case "/export":
@@ -337,7 +364,7 @@ class ChatSession:
                 return CommandReply(self._usage())
             case "/new":
                 self.log = new_session_log(self.sessions_dir)
-                self.permissions = PermissionManager(self.root, self.tools)
+                self.permissions = self._new_permissions()
                 self.agent = self._build_agent([])
                 return CommandReply(f"Yeni oturum · {self.label}", reset=True)
             case "/resume":
@@ -730,8 +757,8 @@ class ChatSession:
         if picked.name != self.anatomy.name:
             self.anatomy = picked
             self.tools = picked.tool_registry(self.root)
-            # Araç listesi değişti: eski izinler yeni araçlara taşınmaz.
-            self.permissions = PermissionManager(self.root, self.tools)
+            # Araç listesi değişti: sohbet içi izinler taşınmaz, `--allow` yeniden uygulanır.
+            self.permissions = self._new_permissions()
             self._rebuild()
         self._save()
         return CommandReply(
@@ -847,34 +874,28 @@ class ChatSession:
             text += " Ama çalışmayacak: " + "; ".join(problems) + "."
         return replace(reply, text=f"{text} · {reply.text}")
 
-    def _diff(self) -> str:
+    async def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
+        """git'i ayrı iş parçacığında çalıştırır (yavaş depoda arayüz donmasın).
+
+        `core.quotepath=off`: Türkçe/boşluklu dosya adları tırnaksız ve olduğu gibi gelir."""
+        return await asyncio.to_thread(
+            subprocess.run,
+            ["git", "-c", "core.quotepath=off", "-C", str(self.root), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+        )
+
+    async def _diff(self) -> str:
         try:
-            stat = subprocess.run(
-                ["git", "-C", str(self.root), "diff", "--stat", "HEAD"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=10,
-            )
+            stat = await self._git("diff", "--stat", "HEAD")
             if stat.returncode != 0:
                 return "Burası bir git deposu değil ya da henüz commit yok; fark gösterilemiyor."
-            body = subprocess.run(
-                ["git", "-C", str(self.root), "diff", "HEAD"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=10,
-            ).stdout
-            untracked = subprocess.run(
-                ["git", "-C", str(self.root), "ls-files", "--others", "--exclude-standard"],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=10,
-            ).stdout.split()
+            body = (await self._git("diff", "HEAD")).stdout
+            listing = await self._git("ls-files", "-z", "--others", "--exclude-standard")
+            untracked = [p for p in listing.stdout.split("\0") if p]
         except (OSError, subprocess.TimeoutExpired) as exc:
             return f"git çalıştırılamadı: {exc}"
         if not stat.stdout.strip() and not untracked:
@@ -997,7 +1018,7 @@ class ChatSession:
             return CommandReply(f"Oturum okunamadı: {exc}")
 
         self.log = SessionLogger(path)
-        self.permissions = PermissionManager(self.root, self.tools)
+        self.permissions = self._new_permissions()
         self.agent = self._build_agent(history_from_events(events))
         transcript: list[tuple[str, str]] = []
         anatomies: set[str] = set()

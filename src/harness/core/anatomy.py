@@ -6,8 +6,9 @@ araçsız ham model; `files` seviye 1, dosya araçları ve plan; `bash` seviye 2
 komut çalıştırma; `full` seviye 3, web erişimi. Her koşu kendi anatomisini
 kaydına yazar; deney sonucu hangi kombinasyondan geldiğini söyler.
 
-Komut ve ağ araçları varsayılan pakette değildir: çalışma dizininin dışına
-dokunabilirler, bu yüzden açıkça seçilmelidir (izin katmanı yine her çağrıyı sorar).
+Varsayılan paket `bash`tır: komut çalıştırabilir, izin katmanı her yazma ve komut
+çağrısını sorar. Ağ aracı (`fetch_url`) yalnız `full`da vardır, açıkça seçilmelidir.
+`raw` hiçbir ince katman taşımaz (AGENTS.md dahil): taban ölçümü çıplak modeldir.
 """
 
 import re
@@ -83,7 +84,8 @@ class Anatomy(BaseModel):
 
 
 PRESETS: dict[str, Anatomy] = {
-    "raw": Anatomy(name="raw", prompt="raw", save_code_blocks=True),
+    # Seviye 0 çıplak modeldir: proje bağlamı da eklenmez (`raw+agents_md` ile açılır).
+    "raw": Anatomy(name="raw", prompt="raw", save_code_blocks=True, agents_md=False),
     "files": Anatomy(name="files", tools=_FILE_TOOLS),
     "bash": Anatomy(name="bash", tools=(*_FILE_TOOLS, "bash")),
     "full": Anatomy(name="full", tools=(*_FILE_TOOLS, "bash", "fetch_url")),

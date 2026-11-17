@@ -78,11 +78,16 @@ class Agent:
         anatomy: Anatomy | None = None,
         root: Path | None = None,
         history: Sequence[Message] = (),
+        memory_session_id: str | None = None,
     ) -> None:
         """root: harness'ın kendisinin dosya yazdığı çalışma dizini (seviye 0 kod blokları).
 
         history: talimattan sonra gelen önceki konuşma; devam edilen oturum ya da
         sohbet ortasında model değişimi için.
+
+        memory_session_id: hafıza katmanının ctx'e verdiği oturum kimliği. ctx aynı notu
+        aynı kimlikte bir kez verir; sohbet ajanı yeniden kurarken (model/katman değişimi)
+        aynı kimliği geçirir ki geçmişte zaten olan notlar tekrar eklenmesin.
         """
         if anatomy is not None and anatomy.save_code_blocks and root is None:
             raise ValueError("Kod bloklarını kaydeden anatomi bir çalışma dizini (root) ister.")
@@ -99,7 +104,7 @@ class Agent:
         self._layers = anatomy if anatomy is not None else Anatomy(name="varsayılan")
         self._prepared = False
         self._memory = (
-            CtxMemory(root, session_id=uuid4().hex)
+            CtxMemory(root, session_id=memory_session_id or uuid4().hex)
             if self._layers.memory and root is not None
             else None
         )
@@ -160,15 +165,14 @@ class Agent:
     async def _recall(
         self, tool: str, details: dict[str, Any], is_error: bool
     ) -> tuple[str, str] | None:
-        """Hafıza katmanı: dokunulan dosyayı anan notlar → (modele not, kayıt özeti)."""
+        """Hafıza katmanı: dokunulan dosyayı anan notlar → (modele not, kayıt özeti).
+
+        ctx çalışmazsa `MemoryUnavailable` çağırana gider (katmanı kapatıp kaydeder)."""
         kind = _RECALL_TOOLS.get(tool)
         path = details.get("path")
         if self._memory is None or kind is None or is_error or not isinstance(path, str):
             return None
-        try:
-            notes = await self._memory.recall(path, kind)
-        except MemoryUnavailable:
-            return None
+        notes = await self._memory.recall(path, kind)
         if not notes:
             return None
         count = sum(line.startswith("- ") for line in notes.splitlines())
@@ -312,23 +316,8 @@ class Agent:
                     outcome = await self._tools.execute(call)
                     tool_duration = perf_counter() - tool_started
                     result = outcome.result
-                    if verdict is not None:  # uyarı: çağrı çalıştı, modele not düşülür
-                        note = verdict.message(call.name)
-                        content = f"{result.content}\n\n{note}"
-                        result = result.model_copy(update={"content": content})
-                    recalled = await self._recall(call.name, outcome.details, result.is_error)
-                    if recalled is not None:
-                        notes, recall_summary = recalled
-                        content = f"{result.content}\n\n{notes}"
-                        result = result.model_copy(update={"content": content})
-                        yield HarnessIntervened(
-                            step=step,
-                            layer="memory",
-                            action="recall",
-                            summary=recall_summary,
-                            call_id=call.id,
-                            timestamp=datetime.now(UTC),
-                        )
+                    # Önce aracın kendi çıktısı kesilir; harness notları sonra eklenir. Böylece
+                    # `full_content` yalnız aracın tam metnidir ve notlar kesilip kaybolmaz.
                     full_content: str | None = None
                     limited = limit_output(result.content) if self._layers.output_limit else None
                     if limited is not None:  # modele kesilmiş hâl gider, tam hâl kayıtta kalır
@@ -340,6 +329,36 @@ class Agent:
                             action="truncate",
                             summary=f"{call.name} sonucu {grouped(len(full_content))} → "
                             f"{grouped(len(limited))} karakter",
+                            call_id=call.id,
+                            timestamp=datetime.now(UTC),
+                        )
+                    if verdict is not None:  # uyarı: çağrı çalıştı, modele not düşülür
+                        note = verdict.message(call.name)
+                        content = f"{result.content}\n\n{note}"
+                        result = result.model_copy(update={"content": content})
+                    try:
+                        recalled = await self._recall(call.name, outcome.details, result.is_error)
+                    except MemoryUnavailable as exc:
+                        # Takılan/bozuk ctx her dosyada yeniden beklenmesin: katman kapanır.
+                        self._memory = None
+                        recalled = None
+                        yield HarnessIntervened(
+                            step=step,
+                            layer="memory",
+                            action="skip",
+                            summary=f"{exc} · hafıza bu oturumda kapatıldı",
+                            call_id=call.id,
+                            timestamp=datetime.now(UTC),
+                        )
+                    if recalled is not None:
+                        notes, recall_summary = recalled
+                        content = f"{result.content}\n\n{notes}"
+                        result = result.model_copy(update={"content": content})
+                        yield HarnessIntervened(
+                            step=step,
+                            layer="memory",
+                            action="recall",
+                            summary=recall_summary,
                             call_id=call.id,
                             timestamp=datetime.now(UTC),
                         )
