@@ -110,6 +110,63 @@ def test_table_has_one_row_per_touched_file_and_a_plain_sentence() -> None:
     assert "1 dosyayı değiştirdi (indirim.py)" in sentence and "1 komut çalıştırdı" in sentence
 
 
+def test_rows_form_a_folder_tree_and_jumps_follow_the_visit_order() -> None:
+    def read(call_id: str, path: str) -> dict[str, object]:
+        return tool(call_id, "read_file", {"path": path}, details={"path": path})
+
+    events = [
+        ev("task_started", task="incele", root="C:\\Dev\\proje", anatomy={"name": "bash"}),
+        *step(1),
+        tool("l1", "list_dir", {"path": "."}, details={"path": "."}),
+        read("r1", "README.md"),
+        *step(2),
+        read("r2", "src/harness/core/agent.py"),
+        read("r3", "src/harness/core/events.py"),
+        read("r4", "src/harness/cli/app.py"),
+        tool("s1", "search", {"pattern": "x"}, details={"paths": ["tests/test_a.py"]}),
+        *step(3),
+        read("r5", "src/harness/core/agent.py"),
+        read("r6", "src/harness/core/agent.py"),  # aynı dosyada kalmak geçiş değildir
+        ev("task_finished", reason="done", steps=3),
+    ]
+    out = build(events)
+
+    tree = [(n["type"], n["name"], n["depth"]) for n in out["tree"]]
+    assert tree == [
+        ("dir", "proje", 0),  # kök: proje klasörünün adı
+        ("file", "README.md", 1),  # kökteki tekil dosyalar en üstte (ilk okunanlar)
+        ("dir", "src/harness/", 1),  # dosyasız tek çocuklu zincir tek satır
+        ("dir", "cli/", 2),
+        ("file", "app.py", 3),
+        ("dir", "core/", 2),
+        ("file", "agent.py", 3),
+        ("file", "events.py", 3),
+        ("dir", "tests/", 1),  # yalnız aramada çıkan dosya da ağaçta
+        ("file", "test_a.py", 2),
+    ]
+    root, harness = out["tree"][0], out["tree"][2]
+    assert root["self"] == "./"  # kök listelemesi kök satırında
+    assert harness["files"] == [
+        "src/harness/cli/app.py",
+        "src/harness/core/agent.py",
+        "src/harness/core/events.py",
+    ]
+
+    visits = [t["path"] for t in out["trail"]]
+    assert visits == [
+        "./",
+        "README.md",
+        "src/harness/core/agent.py",
+        "src/harness/core/events.py",
+        "src/harness/cli/app.py",
+        "src/harness/core/agent.py",
+        "src/harness/core/agent.py",
+    ]  # arama eşleşmesi ziyaret değildir
+    pairs = [(j["from"]["path"], j["to"]["path"]) for j in out["jumps"]]
+    assert pairs[-1] == ("src/harness/cli/app.py", "src/harness/core/agent.py")
+    assert len(pairs) == 5
+
+
 def test_turns_get_their_own_step_labels() -> None:
     events = [
         ev("task_started", task="bir", root=ROOT),

@@ -27,7 +27,7 @@
   html, body { overflow-x: hidden; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.5 system-ui, "Segoe UI", sans-serif; }
-  header { position: sticky; top: 0; z-index: 2; background: var(--surface);
+  header { position: sticky; top: 0; z-index: 10; background: var(--surface);
            border-bottom: 1px solid var(--border); padding: 10px 16px;
            display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
   header h1 { font-size: 15px; margin: 0; font-weight: 600; }
@@ -35,8 +35,8 @@
   .dot.live { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
   .stats { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 13px; }
   .stats b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
-  .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: calc(100vh - 50px); }
-  aside { border-right: 1px solid var(--border); padding: 12px; overflow-y: auto; max-height: calc(100vh - 50px); position: sticky; top: 50px; }
+  .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: calc(100vh - var(--head, 50px)); }
+  aside { border-right: 1px solid var(--border); padding: 12px; overflow-y: auto; max-height: calc(100vh - var(--head, 50px)); position: sticky; top: var(--head, 50px); }
   aside label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
   .log { display: block; width: 100%; text-align: left; border: 1px solid transparent; background: none;
          color: var(--text); padding: 7px 8px; border-radius: 6px; cursor: pointer; font: inherit; }
@@ -73,7 +73,7 @@
                  padding: 3px 12px; font: inherit; cursor: pointer; }
   .tabs button.on { color: var(--text); background: var(--surface-2); border-color: var(--accent); }
   /* ---- akış defteri (watch_ledger.js) ---- */
-  .lg-view { display: flex; flex-direction: column; height: calc(100vh - 50px); min-width: 0; }
+  .lg-view { display: flex; flex-direction: column; height: calc(100vh - var(--head, 50px)); min-width: 0; }
   .lg-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding: 10px 16px;
               border-bottom: 1px solid var(--border); background: var(--surface); }
   .lg-status { font-weight: 600; font-size: 13px; padding: 4px 10px; border-radius: 999px;
@@ -178,17 +178,100 @@
   .meta.ok { color: var(--ok); } .meta.err { color: var(--err); }
   .linklike { border: 0; background: none; color: var(--accent); padding: 0; font: inherit; cursor: pointer; }
   /* ---- dosyalar görünümü (watch_files.js) ---- */
-  .fl-view { display: flex; flex-direction: column; height: calc(100vh - 50px); min-width: 0; }
+  .fl-view { display: flex; flex-direction: column; height: calc(100vh - var(--head, 50px)); min-width: 0; }
   .fl-head { padding: 12px 16px 8px; border-bottom: 1px solid var(--border); background: var(--surface); }
   .fl-sentence { font-size: 14px; margin-bottom: 6px; }
   .fl-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted); align-items: center; }
   .fl-key { display: inline-flex; align-items: center; gap: 4px; }
   .fl-body { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 32%); min-height: 0; }
-  .fl-grid { display: grid; align-content: start; overflow: auto; padding: 8px 16px 24px; row-gap: 2px; }
-  .fl-corner { font-size: 11px; color: var(--muted); padding: 4px 6px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
+  .fl-grid { display: grid; align-content: start; overflow: auto; padding: 8px 16px 24px; row-gap: 2px; position: relative; }
+  .fl-corner { font-size: 11px; color: var(--muted); padding: 4px 6px; position: sticky; top: 0; background: var(--bg); z-index: 2; }
   .fl-step { font: 11px var(--mono); color: var(--muted); text-align: center; padding: 4px 0; position: sticky; top: 0;
-             background: var(--bg); z-index: 1; cursor: help; }
-  .fl-step.turn { border-left: 2px solid var(--border); }
+             background: var(--bg); z-index: 2; cursor: help; }
+  .fl-subhead { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; justify-content: space-between; }
+  .fl-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+  .fl-toggle { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+  .fl-btn { border: 1px solid var(--border); background: none; color: var(--muted); border-radius: 6px;
+            padding: 2px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+  .fl-btn:hover { color: var(--text); border-color: var(--accent); }
+  /* ağaç satırları */
+  .fl-file.dir { font-weight: 600; }
+  .fl-file.root .fl-name { color: var(--accent); }
+  .fl-caret { display: inline-block; width: 14px; color: var(--muted); font-size: 11px; }
+  .fl-file.leaf .fl-name { font-weight: 400; }
+  .fl-cell.dir { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+  .fl-empty.dir { background: color-mix(in srgb, var(--surface-2) 25%, transparent); }
+  /* geçiş okları */
+  .fl-trail { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 1; overflow: visible; }
+  .fl-jump { fill: none; stroke: var(--accent); stroke-width: 1.4; opacity: .45; }
+  .fl-jump.in { stroke: var(--warn); stroke-width: 2.4; opacity: 1; }
+  .fl-jump.out { stroke: var(--ok); stroke-width: 2.4; opacity: 1; }
+  .fl-jump.dim { opacity: .1; }
+  .fl-group { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 2 3; opacity: .8; }
+  .fl-group.dim { opacity: .15; }
+  .fl-group-key { display: inline-block; width: 2px; height: 14px; border-left: 1.5px dashed var(--muted); vertical-align: middle; }
+  .fl-arrowhead { fill: var(--accent); } .fl-arrowhead.in { fill: var(--warn); } .fl-arrowhead.out { fill: var(--ok); }
+  .fl-arrow-key { display: inline-block; width: 18px; height: 2px; background: var(--accent); position: relative; opacity: .7; }
+  .fl-arrow-key::after { content: ""; position: absolute; right: -2px; top: -3px; border: 4px solid transparent;
+                         border-left: 5px solid var(--accent); border-right: 0; }
+  /* ---- üst sağ: düzen haritası ve tema ---- */
+  .hud { display: flex; gap: 10px; align-items: center; margin-left: auto; }
+  .layout-map { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--border); border-radius: 9px;
+                background: var(--bg); }
+  .lm { border: 1px solid var(--border); background: var(--surface-2); border-radius: 5px; height: 24px; padding: 0;
+        cursor: pointer; display: grid; place-items: center; color: var(--muted);
+        transition: background .2s, border-color .2s, opacity .2s, transform .15s; }
+  .lm:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .lm-side { width: 22px; }
+  .lm-mid { width: 64px; font-size: 11px; letter-spacing: .02em; }
+  .lm-lines { display: grid; gap: 3px; }
+  .lm-lines i { display: block; width: 10px; height: 2px; border-radius: 1px; background: currentColor; }
+  .lm[aria-pressed="true"].lm-side { background: color-mix(in srgb, var(--accent) 22%, var(--surface-2)); color: var(--accent);
+                                     border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+  .lm[aria-pressed="false"].lm-side { background: transparent; border-style: dashed; opacity: .7; }
+  .lm-mid[aria-pressed="true"] { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+  .theme-wrap { position: relative; }
+  .theme-btn { display: inline-flex; gap: 7px; align-items: center; border: 1px solid var(--border); background: var(--surface-2);
+               color: var(--text); border-radius: 999px; padding: 3px 11px 3px 4px; font: inherit; font-size: 12px; cursor: pointer; }
+  .theme-btn:hover { border-color: var(--accent); }
+  .theme-orb { width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 25%, transparent);
+               background: conic-gradient(var(--accent) 0 25%, var(--ok) 0 50%, var(--warn) 0 75%, var(--harness) 0); }
+  .theme-pop { position: absolute; right: 0; top: calc(100% + 8px); z-index: 20; width: min(520px, calc(100vw - 32px));
+               background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px;
+               box-shadow: 0 18px 50px rgb(0 0 0 / .35); display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .theme-card { border: 1px solid var(--border); border-radius: 10px; padding: 0; overflow: hidden; cursor: pointer; text-align: left;
+                background: none; color: var(--text); font: inherit; transition: transform .15s, border-color .15s; }
+  .theme-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+  .theme-card.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .theme-prev { height: 58px; padding: 8px; display: grid; grid-template-columns: 18px 1fr; gap: 6px; }
+  .theme-prev .tp-rail { border-radius: 4px; }
+  .theme-prev .tp-body { border-radius: 4px; padding: 6px; display: flex; flex-direction: column; gap: 5px; }
+  .theme-prev .tp-line { height: 4px; border-radius: 2px; }
+  .theme-prev .tp-dots { display: flex; gap: 4px; margin-top: auto; }
+  .theme-prev .tp-dots i { width: 9px; height: 9px; border-radius: 2px; }
+  .theme-meta { padding: 6px 9px 8px; border-top: 1px solid var(--border); }
+  .theme-meta b { display: block; font-size: 13px; }
+  .theme-meta span { font-size: 11px; color: var(--muted); }
+  body { transition: background-color .35s, color .35s; }
+
+  /* ---- kapanan paneller ince şerit olur: dikey adıyla kalır, tıklayınca açılır ---- */
+  .layout, .fl-body, .lg-body { transition: grid-template-columns .28s cubic-bezier(.2, .8, .2, 1); }
+  body.hide-sessions .layout { grid-template-columns: 30px minmax(0, 1fr); }
+  body.hide-side .fl-body, body.hide-side .lg-body { grid-template-columns: minmax(0, 1fr) 30px; }
+  body.hide-sessions .layout > aside, body.hide-side .fl-side, body.hide-side .lg-inspector {
+    padding: 0; overflow: hidden; cursor: pointer; position: relative; background: var(--surface);
+    display: flex; align-items: flex-start; justify-content: center; }
+  body.hide-sessions .layout > aside > *, body.hide-side .fl-side > *, body.hide-side .lg-inspector > * { display: none; }
+  body.hide-sessions .layout > aside::after, body.hide-side .fl-side::after, body.hide-side .lg-inspector::after {
+    writing-mode: vertical-rl; font-size: 12px; letter-spacing: .08em; color: var(--muted); padding: 14px 0;
+    transition: color .2s; }
+  body.hide-sessions .layout > aside::after { content: "› OTURUMLAR " attr(data-count); transform: rotate(180deg); }
+  body.hide-side .fl-side::after, body.hide-side .lg-inspector::after { content: "‹ AYRINTI"; }
+  body.hide-sessions .layout > aside:hover::after, body.hide-side .fl-side:hover::after,
+  body.hide-side .lg-inspector:hover::after { color: var(--accent); }
+  body.hide-sessions .layout > aside:hover, body.hide-side .fl-side:hover, body.hide-side .lg-inspector:hover {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+  .fl-step.fl-turn { border-left: 2px solid var(--border); }
   .fl-lane { font-size: 12px; color: var(--muted); padding: 3px 6px; font-style: italic; }
   .fl-file { font-size: 13px; padding: 3px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; border-radius: 4px; }
   .fl-file:hover { background: var(--surface-2); }
@@ -225,7 +308,9 @@
     .fl-side { border-left: 0; border-top: 1px solid var(--border); }
   }
   @media (max-width: 760px) {
-    .layout { grid-template-columns: minmax(0, 1fr); }
+    .layout, body.hide-sessions .layout { grid-template-columns: minmax(0, 1fr); }
+    body.hide-sessions .layout > aside::after { writing-mode: horizontal-tb; transform: none; padding: 8px 0; }
+    .hud { margin-left: 0; }
     header { position: static; }
     aside { position: static; max-height: 220px; border-right: 0; border-bottom: 1px solid var(--border); }
   }
@@ -236,6 +321,22 @@
   <h1><span class="dot" id="dot"></span>Harness canlı panel</h1>
   <nav class="tabs"><button id="tab-flow" class="on">Akış</button><button id="tab-files">Dosyalar</button></nav>
   <div class="stats" id="stats"></div>
+  <div class="hud">
+    <!-- düzen haritası: sayfanın üç bölümünün küçük resmi; parçaya tıklamak o bölümü açar/kapatır -->
+    <div class="layout-map" role="group" aria-label="Düzen">
+      <button class="lm lm-side" id="toggle-sessions" title="Oturumlar paneli · [">
+        <span class="lm-lines"><i></i><i></i><i></i></span></button>
+      <button class="lm lm-mid" id="toggle-focus" title="Odak: iki yanı birden kapat/aç · F">
+        <span class="lm-focus">Odak</span></button>
+      <button class="lm lm-side" id="toggle-side" title="Ayrıntı paneli · ]">
+        <span class="lm-lines"><i></i><i></i><i></i></span></button>
+    </div>
+    <div class="theme-wrap">
+      <button id="theme-btn" class="theme-btn" aria-haspopup="true" aria-expanded="false" title="Renk teması · T">
+        <span class="theme-orb"></span><span id="theme-name">Tema</span></button>
+      <div class="theme-pop" id="theme-pop" hidden></div>
+    </div>
+  </div>
 </header>
 <div class="layout">
   <aside>
@@ -274,6 +375,127 @@ function showView(view) {
 $("tab-flow").onclick = () => showView("flow");
 $("tab-files").onclick = () => showView("files");
 
+// Tercihler tarayıcıda saklanır; saklanamazsa (gizli pencere) yalnız bu sayfa boyunca geçerli.
+const remember = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* yok say */ } };
+const recall = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
+
+// ---- yan paneller: düzen haritası, ince şeritler, kısayollar
+const panels = { sessions: true, side: true, ...recall("harness-panels", {}) };
+function applyPanels() {
+  document.body.classList.toggle("hide-sessions", !panels.sessions);
+  document.body.classList.toggle("hide-side", !panels.side);
+  $("toggle-sessions").setAttribute("aria-pressed", String(panels.sessions));
+  $("toggle-side").setAttribute("aria-pressed", String(panels.side));
+  $("toggle-focus").setAttribute("aria-pressed", String(!panels.sessions && !panels.side));
+  remember("harness-panels", panels);
+}
+function togglePanel(name) {
+  if (name === "focus") {
+    const focused = !panels.sessions && !panels.side;
+    panels.sessions = panels.side = focused;  // odaktaysa ikisini de geri aç
+  } else panels[name] = !panels[name];
+  applyPanels();
+}
+$("toggle-sessions").onclick = () => togglePanel("sessions");
+$("toggle-side").onclick = () => togglePanel("side");
+$("toggle-focus").onclick = () => togglePanel("focus");
+// Kapalı panelin şeridine tıklamak onu açar (şerit, panelin kendisidir).
+document.addEventListener("click", (e) => {
+  if (!panels.sessions && e.target.closest(".layout > aside")) { togglePanel("sessions"); e.stopPropagation(); }
+  else if (!panels.side && e.target.closest(".fl-side, .lg-inspector")) { togglePanel("side"); e.stopPropagation(); }
+}, true);
+
+// ---- renk temaları: TUI'deki paletler (cli/themes.py) + yalnız web'e özgü üç tema
+const THEMES = {
+  "sistem": { label: "Sistem", note: "işletim sisteminin açık/koyu tercihi" },
+  "koyu": { label: "Koyu", note: "varsayılan koyu", dark: true, bg: "#0f1216", surface: "#171b20", surface2: "#222730",
+            text: "#ebeff5", muted: "#9199a5", border: "#2a2e34", accent: "#6895f4", ok: "#5cc98a", warn: "#e0a83a",
+            err: "#f07878", harness: "#c39bff" },
+  "açık": { label: "Açık", note: "aydınlık ortam", dark: false, bg: "#fcfcfc", surface: "#ffffff", surface2: "#eef0f4",
+            text: "#11161f", muted: "#6b727e", border: "#e3e5e7", accent: "#436ed1", ok: "#1f8a4c", warn: "#9a6400",
+            err: "#c23b3b", harness: "#7a3fc4" },
+  "gece": { label: "Gece mavisi", note: "derin lacivert, camgöbeği vurgu", dark: true, bg: "#0a0f1e", surface: "#111a2e",
+            surface2: "#1a2542", text: "#dde6ff", muted: "#8693b8", border: "#25314f", accent: "#5ad1ff", ok: "#4fd1a1",
+            warn: "#ffb454", err: "#ff6b8a", harness: "#b18cff" },
+  "kağıt": { label: "Kâğıt", note: "sıcak, basılı sayfa gibi", dark: false, bg: "#f3ead6", surface: "#fbf6e9",
+             surface2: "#eadfc4", text: "#3a2e1f", muted: "#7a6a52", border: "#d8cba8", accent: "#b0532c", ok: "#4f7a28",
+             warn: "#a8701a", err: "#b23a3a", harness: "#7b4fa0" },
+  "fosfor": { label: "Fosfor", note: "eski terminal ekranı", dark: true, bg: "#040904", surface: "#0a140a",
+              surface2: "#122012", text: "#b9ffb0", muted: "#5fa65a", border: "#1d3a1d", accent: "#39ff14", ok: "#39ff14",
+              warn: "#e6ff3a", err: "#ff5f56", harness: "#00e5ff" },
+  "yüksek-kontrast": { label: "Yüksek kontrast", note: "en yüksek okunurluk", dark: true, bg: "#000000", surface: "#000000",
+                       surface2: "#1a1a1a", text: "#ffffff", muted: "#d0d0d0", border: "#ffffff", accent: "#ffd400",
+                       ok: "#00e676", warn: "#ffd400", err: "#ff5252", harness: "#40c4ff" },
+  "renk-körü": { label: "Renk körü", note: "Okabe-Ito: mavi/turuncu ayrımı", dark: true, bg: "#0f1216", surface: "#171b20",
+                 surface2: "#222730", text: "#ebeff5", muted: "#9199a5", border: "#2a2e34", accent: "#56b4e9",
+                 ok: "#009e73", warn: "#e69f00", err: "#d55e00", harness: "#cc79a7" },
+};
+const VARS = { bg: "--bg", surface: "--surface", surface2: "--surface-2", text: "--text", muted: "--muted",
+               border: "--border", accent: "--accent", ok: "--ok", warn: "--warn", err: "--err", harness: "--harness" };
+let theme = THEMES[recall("harness-theme", "sistem")] ? recall("harness-theme", "sistem") : "sistem";
+
+function applyTheme(name) {
+  theme = name;
+  const t = THEMES[name], root = document.documentElement;
+  for (const [key, cssVar] of Object.entries(VARS)) {
+    if (t.bg) root.style.setProperty(cssVar, t[key]); else root.style.removeProperty(cssVar);
+  }
+  if (t.bg) { root.dataset.theme = t.dark ? "dark" : "light"; root.style.colorScheme = t.dark ? "dark" : "light"; }
+  else { delete root.dataset.theme; root.style.removeProperty("color-scheme"); }
+  $("theme-name").textContent = t.label;
+  remember("harness-theme", name);
+  for (const card of $("theme-pop").children) card.classList.toggle("on", card.dataset.theme === name);
+  // Oklar ve işaretler CSS değişkenlerinden boyanır: yeniden çizmeye gerek yok.
+}
+
+function themeCards() {
+  const system = matchMedia("(prefers-color-scheme: dark)").matches ? THEMES["koyu"] : THEMES["açık"];
+  $("theme-pop").replaceChildren(...Object.entries(THEMES).map(([name, t]) => {
+    const c = t.bg ? t : system;
+    const card = el("button", "theme-card" + (name === theme ? " on" : ""));
+    card.dataset.theme = name;
+    const prev = el("div", "theme-prev"); prev.style.background = c.bg;
+    const rail = el("div", "tp-rail"); rail.style.background = c.surface2;
+    const body = el("div", "tp-body"); body.style.background = c.surface; body.style.border = `1px solid ${c.border}`;
+    for (const [w, color] of [["70%", c.text], ["45%", c.muted]]) {
+      const line = el("i", "tp-line"); line.style.cssText = `display:block;width:${w};background:${color}`; body.append(line);
+    }
+    const dots = el("div", "tp-dots");
+    for (const color of [c.accent, c.ok, c.warn, c.err, c.harness]) { const d = el("i"); d.style.background = color; dots.append(d); }
+    body.append(dots); prev.append(rail, body);
+    const meta = el("div", "theme-meta"); meta.append(el("b", "", t.label), el("span", "", t.note));
+    card.append(prev, meta);
+    card.onclick = () => { applyTheme(name); closeThemes(); };
+    return card;
+  }));
+}
+function closeThemes() { $("theme-pop").hidden = true; $("theme-btn").setAttribute("aria-expanded", "false"); }
+$("theme-btn").onclick = (e) => {
+  e.stopPropagation();
+  const open = $("theme-pop").hidden;
+  if (open) themeCards();
+  $("theme-pop").hidden = !open; $("theme-btn").setAttribute("aria-expanded", String(open));
+};
+document.addEventListener("click", (e) => { if (!e.target.closest(".theme-wrap")) closeThemes(); });
+
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  if (e.key === "Escape") return closeThemes();
+  if (e.key === "t" || e.key === "T") {  // TUI'deki Ctrl+T gibi: sıradaki tema
+    const names = Object.keys(THEMES);
+    e.preventDefault(); return applyTheme(names[(names.indexOf(theme) + 1) % names.length]);
+  }
+  const name = { "[": "sessions", "]": "side", f: "focus", F: "focus" }[e.key];
+  if (name) { e.preventDefault(); togglePanel(name); }
+});
+applyPanels();
+applyTheme(theme);
+// Görünümler pencere boyunu üst çubuktan sonra kalan yere göre alır; çubuk satır kırarsa da doğru kalsın.
+const header = document.querySelector("header");
+const measureHeader = () => document.documentElement.style.setProperty("--head", header.offsetHeight + "px");
+new ResizeObserver(measureHeader).observe(header);
+measureHeader();
+
 function open(path) {
   if (source) source.close();
   current = path; flow.reset(); filesView.reset(); drawLogs();
@@ -290,6 +512,7 @@ function open(path) {
 }
 
 function drawLogs() {
+  document.querySelector(".layout > aside").dataset.count = `· ${logs.length}`;  // kapalı şeritte görünür
   $("logs").replaceChildren(...logs.map((log) => {
     const button = el("button", "log" + (log.path === current ? " on" : ""), log.task || "(boş kayıt)");
     button.append(el("small", "", new Date(log.modified * 1000).toLocaleString("tr-TR") + " · " + log.path));
