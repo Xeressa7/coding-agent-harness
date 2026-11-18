@@ -244,9 +244,10 @@ def pick_anatomy(name: str) -> Anatomy:
 
 
 def load_system_prompt(anatomy: Anatomy) -> str:
-    """Anatominin talimat dosyasını okur; dosyanın başındaki açıklama yorumu modele gitmez."""
-    text = (_PROMPT_DIR / _PROMPT_FILES[anatomy.prompt]).read_text(encoding="utf-8")
-    return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip()
+    """Anatominin talimat dosyası + açık talimat katmanları; açıklama yorumları modele gitmez."""
+    files = [_PROMPT_FILES[anatomy.prompt], *(["narrow_scope.md"] if anatomy.narrow_scope else [])]
+    texts = [(_PROMPT_DIR / name).read_text(encoding="utf-8") for name in files]
+    return "\n\n".join(re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip() for text in texts)
 
 
 def start_session(label: str) -> Path:

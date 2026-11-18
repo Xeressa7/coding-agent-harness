@@ -24,6 +24,7 @@
   const LAYERS = {
     loop_guard: "Takılma uyarısı", output_limit: "Çıktı sınırı",
     agents_md: "Proje talimatı", memory: "Hafıza", code_blocks: "Kod blokları",
+    test_guard: "Test koruyucusu",
   };
   const LAYER_HELP = {
     loop_guard: "Aynı araç çağrısı art arda gelince harness modeli uyarır ya da çağrıyı durdurur.",
@@ -31,6 +32,7 @@
     agents_md: "Projedeki AGENTS.md (yoksa CLAUDE.md) sistem talimatının sonuna eklenir; ctx'in hafıza bölümü ayrılır (o bölüm hafıza katmanına ait).",
     memory: "agent-context: görev başında not haritası, dosya okunup yazılınca o dosyayı anan notlar.",
     code_blocks: "Seviye 0: modelin cevabındaki adlı kod bloklarını harness dosyaya yazar.",
+    test_guard: "Dosya araçlarıyla yapılan düzenleme görevden önce var olan bir test dosyasından doğrulama satırı eksiltirse harness bunu sonuca not olarak yazar; engellemez.",
   };
   const ACTIONS = {
     warn: "modele hatırlatıldı", block: "çağrı çalıştırılmadı", truncate: "ortası kesildi",

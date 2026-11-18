@@ -163,7 +163,7 @@ def test_plain_list_can_be_left_without_choosing(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(cli, "make_llm", silent_model)
-    result = CliRunner().invoke(cli.app, ["--plain"], input="/anatomy\n9\n\n/exit\n")
+    result = CliRunner().invoke(cli.app, ["--plain"], input="/anatomy\n99\n\n/exit\n")
     assert result.exit_code == 0, result.output
     assert "Listede böyle bir numara yok" in result.output
     assert not saved.exists()  # vazgeçilen seçim kaydedilmez

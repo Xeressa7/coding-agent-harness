@@ -77,6 +77,8 @@ class Anatomy(BaseModel):
     output_limit: bool = True  # uzun araç çıktısının ortası kesilir (core/context.py)
     agents_md: bool = True  # AGENTS.md sistem talimatına eklenir (core/project_context.py)
     memory: bool = False  # agent-context hafızası: harita + dosyaya dokununca not (ctx)
+    test_guard: bool = False  # eski testten doğrulama eksilince not (core/guards.py)
+    narrow_scope: bool = False  # talimata "en dar yerde düzelt, testler sözleşmedir" (prompts/)
 
     def tool_registry(self, root: Path) -> ToolRegistry:
         """Açık araçları, çalışma dizinine bağlı olarak kurar."""
@@ -99,6 +101,8 @@ LAYERS: dict[str, str] = {
     "output_limit": "40.000 karakteri aşan araç çıktısının ortasını keser, modele ve kayda söyler",
     "agents_md": "projedeki AGENTS.md'yi (yoksa CLAUDE.md) talimata ekler; ctx hafıza bölümü hariç",
     "memory": "agent-context hafızası: görev başında not haritası, dosya okununca ilgili notlar",
+    "test_guard": "düzenleme görevden önce var olan bir testten doğrulama silerse modele sorar",
+    "narrow_scope": "talimata ekler: en dar yerde düzelt, mevcut testler ve belgeler sözleşmedir",
 }
 
 

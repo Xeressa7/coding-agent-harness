@@ -51,6 +51,7 @@ LAYER_NAMES = {
     "output_limit": "Çıktı sınırı",
     "agents_md": "Proje talimatı",
     "memory": "Hafıza",
+    "test_guard": "Test koruyucusu",
 }
 _ACTIONS = {
     "warn": "modele hatırlatıldı",

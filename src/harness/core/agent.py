@@ -38,7 +38,7 @@ from harness.core.events import (
     ToolFinished,
     ToolStarted,
 )
-from harness.core.guards import RepeatGuard
+from harness.core.guards import RepeatGuard, TestGuard
 from harness.core.permissions import Decision, PermissionManager
 from harness.core.project_context import CtxMemory, MemoryUnavailable, load_instructions
 from harness.llm.base import LLMClient, StreamingLLMClient
@@ -181,6 +181,7 @@ class Agent:
     async def run(self, task: str) -> AsyncGenerator[Event, bool | None]:
         self.history.append(UserMessage(text=task))
         guard = RepeatGuard() if self._anatomy and self._anatomy.loop_guard else None
+        tests = TestGuard(self._root) if self._layers.test_guard and self._root else None
         started = perf_counter()
         step = 0
         yield TaskStarted(
@@ -312,6 +313,8 @@ class Agent:
                     yield ToolStarted(
                         call=call, category=category, summary=summary, timestamp=datetime.now(UTC)
                     )
+                    if tests is not None:
+                        tests.before(call)
                     tool_started = perf_counter()
                     outcome = await self._tools.execute(call)
                     tool_duration = perf_counter() - tool_started
@@ -336,6 +339,18 @@ class Agent:
                         note = verdict.message(call.name)
                         content = f"{result.content}\n\n{note}"
                         result = result.model_copy(update={"content": content})
+                    removed = tests.after(call) if tests is not None else None
+                    if removed is not None:  # eski testten doğrulama eksildi: modele sorulur
+                        content = f"{result.content}\n\n{removed.message()}"
+                        result = result.model_copy(update={"content": content})
+                        yield HarnessIntervened(
+                            step=step,
+                            layer="test_guard",
+                            action="warn",
+                            summary=f"{removed.path}: {len(removed.removed)} eski doğrulama",
+                            call_id=call.id,
+                            timestamp=datetime.now(UTC),
+                        )
                     try:
                         recalled = await self._recall(call.name, outcome.details, result.is_error)
                     except MemoryUnavailable as exc:
