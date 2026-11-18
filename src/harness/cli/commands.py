@@ -27,6 +27,7 @@ from harness.cli.themes import THEME_FILE, available, palette_for
 from harness.cli.watch import WatchServer
 from harness.core.agent import Agent
 from harness.core.anatomy import LAYERS, PRESETS, Anatomy, compose, get_preset
+from harness.core.checkpoints import Checkpoints, CheckpointUnavailable
 from harness.core.events import (
     Event,
     HarnessIntervened,
@@ -37,6 +38,7 @@ from harness.core.events import (
 from harness.core.metrics import read_stats, work_stats
 from harness.core.permissions import Decision, PermissionManager
 from harness.core.project_context import ctx_command
+from harness.core.pruning import PRUNE_KEEP_STEPS, estimate_tokens, prune
 from harness.core.session_log import (
     SessionLogger,
     SessionSummary,
@@ -81,6 +83,8 @@ COMMANDS: tuple[Command, ...] = (
         "/resume", "Bir oturuma kaldığı yerden devam eder; adla aranabilir", "Oturum", "[arama]"
     ),
     Command("/new", "Yeni oturum: geçmiş sıfırlanır, yeni kayıt (`/clear`)", "Oturum"),
+    Command("/undo", "Dosya değiştiren son turu geri alır; git geçmişine dokunmaz", "Oturum"),
+    Command("/compact", "Bağlamı toplar: son 5 adım dışındaki araç sonuçları nota döner", "Oturum"),
     Command("/export", "Bu oturumu Markdown olarak dışa aktarır", "Oturum", "[dosya]"),
     Command("/copy", "Ajanın son cevabını panoya kopyalar", "Oturum"),
     Command("/status", "Model, effort, anatomi, proje ve kayıt", "Bilgi"),
@@ -142,7 +146,9 @@ DEFAULT_EFFORT_WORDS = {"varsayılan", "default", "none", "yok"}
 SESSION_LIMIT = 100
 # Sohbette bir mesajın en çok kaç model adımı süreceği. Keşif görevleri 20'yi aşıyor
 # (2026-10-29 gerçek koşu: "repoyu incele" 20 adımda sonuca varmadan durdu).
-CHAT_STEP_LIMIT = 50
+# 2026-11-18: 2. ve 3. turun gerçek görevleri 40–100+ çağrı sürdü (T4 bir koşuda 103);
+# 50 sınırı işi yarıda kesiyordu. Döngüye giren model için `+loop_guard` katmanı var.
+CHAT_STEP_LIMIT = 150
 STEP_LIMIT_HINT = "Adım sınırı doldu; geçmiş korundu: kaldığı yerden sürmesi için “devam” yaz."
 
 PickerKind = Literal[
@@ -240,8 +246,12 @@ class ChatSession:
         open_url: Callable[[str], None] | None = None,
         theme: str | None = None,
         max_steps: int = CHAT_STEP_LIMIT,
+        checkpoints: bool = True,
     ) -> None:
+        """checkpoints: her turdan önce görüntü alınır (`/undo`). Tek görevlik koşuda (-p)
+        geri alacak tur olmadığı için kapalıdır; deney süresine de görüntü maliyeti eklenmez."""
         self.root = root
+        self._use_checkpoints = checkpoints
         self.max_steps = max_steps  # tur başı adım sınırı (döngüye giren modele karşı bütçe)
         self.anatomy: Anatomy = anatomy
         self.provider: Provider = provider
@@ -264,7 +274,12 @@ class ChatSession:
         # "hep izin ver" ise yalnız o izin yöneticisi yaşadıkça geçerlidir.
         self.allowed: tuple[str, ...] = ()
         self.permissions = self._new_permissions()
+        # Her turdan önce çalışma dizininin görüntüsü (core/checkpoints.py); `/undo` geri alır.
+        self.checkpoints = self._new_checkpoints()
         self.agent = self._build_agent([])
+
+    def _new_checkpoints(self) -> Checkpoints | None:
+        return Checkpoints(self.root) if self._use_checkpoints else None
 
     @property
     def label(self) -> str:
@@ -290,10 +305,13 @@ class ChatSession:
             # Kimlik oturum kaydına bağlı: model/katman değişince aynı kalır, /new ile yenilenir,
             # /resume eski oturumun kimliğine döner (ctx o notları zaten verdiğini bilir).
             memory_session_id=self.log.path.stem,
+            checkpoints=self.checkpoints,
         )
 
     def _rebuild(self) -> None:
+        notes = self.agent.notes
         self.agent = self._build_agent(self.agent.history[1:])
+        self.agent.notes = notes  # model/katman değişse de bekleyen not modele ulaşsın
 
     def allow(self, names: list[str]) -> None:
         """`--allow`: araçlar bu çalıştırma boyunca sormadan çalışır (yol denetimi yine geçerli)."""
@@ -367,10 +385,16 @@ class ChatSession:
             case "/new":
                 self.log = new_session_log(self.sessions_dir)
                 self.permissions = self._new_permissions()
+                # Geri alma yeni oturumun turlarıyla sınırlı.
+                self.checkpoints = self._new_checkpoints()
                 self.agent = self._build_agent([])
                 return CommandReply(f"Yeni oturum · {self.label}", reset=True)
             case "/resume":
                 return self._resume(argument)
+            case "/undo":
+                return CommandReply(await self._undo(), view="chat")
+            case "/compact":
+                return CommandReply(self._compact())
             case _:
                 return CommandReply(f"Bilinmeyen komut: `{name}`. Liste için `/help`.")
 
@@ -729,10 +753,20 @@ class ChatSession:
     def _anatomy(self, argument: str) -> CommandReply:
         base = self.anatomy.name.split("+")[0].split("-")[0]
         layers_on = [layer for layer in LAYERS if getattr(self.anatomy, layer)]
+        # Paket değişince kullanıcının değiştirdiği katmanlar taşınır, paketin kendi
+        # varsayılanları (ör. bash'in persistent_cwd'si) yeni paketten gelir.
+        default = PRESETS.get(base, self.anatomy)
+        changed = {
+            layer for layer in LAYERS if getattr(self.anatomy, layer) != getattr(default, layer)
+        }
+
+        def carried(preset: Anatomy) -> set[str]:
+            return {layer for layer in LAYERS if getattr(preset, layer) != (layer in changed)}
+
         if not argument:
             presets = tuple(
                 Choice(
-                    compose(a.name, set(layers_on)),
+                    compose(a.name, carried(a)),
                     a.name,
                     ", ".join(a.tools) or "araç yok: model yalnız yazar",
                     group="Hazır paketler",
@@ -890,6 +924,60 @@ class ChatSession:
             timeout=10,
         )
 
+    def _compact(self) -> str:
+        """Elle bağlam toplama: budama katmanının yaptığını şimdi, bir kez yapar."""
+        history = self.agent.history
+        before = estimate_tokens(history)
+        pruned, results, chars = prune(history, PRUNE_KEEP_STEPS)
+        if not results:
+            return (
+                f"Toplanacak eski araç sonucu yok: son {PRUNE_KEEP_STEPS} adımın sonuçları "
+                "her zaman korunur."
+            )
+        history[:] = pruned
+        after = estimate_tokens(pruned)
+        summary = (
+            f"/compact · {results} sonuç · {chars:,} karakter · ~{before:,} → ~{after:,} token"
+        ).replace(",", ".")
+        # Kayda girer: incelemede görünür. Devam edilen oturum yine tam geçmişle açılır.
+        self.log.write(
+            HarnessIntervened(step=0, layer="context_prune", action="prune", summary=summary)
+        )
+        return (
+            f"{results} eski araç sonucu bağlamdan çıkarıldı "
+            f"(~{before:,} → ~{after:,} token).".replace(",", ".")
+            + " Model gerekirse dosyaları yeniden okur; bir sonraki çağrıda önbellek bir kez "
+            "yeniden kurulur."
+        )
+
+    async def _undo(self) -> str:
+        """Son değişiklikli turu geri alır ve bir sonraki mesajda modele söyler."""
+        if self.checkpoints is None:
+            return "Geri alma yalnız sohbette çalışır (tek görevlik koşuda görüntü alınmaz)."
+        if self.checkpoints.broken is not None:
+            return f"Geri alma bu oturumda kapalı: {self.checkpoints.broken}"
+        try:
+            restored = await asyncio.to_thread(self.checkpoints.undo)
+        except CheckpointUnavailable as exc:
+            return f"Geri alınamadı: {exc}"
+        if restored is None:
+            return "Geri alınacak değişiklik yok: bu oturumun turları dosya değiştirmedi."
+        files = [*restored.rewritten, *restored.removed]
+        shown = ", ".join(f"`{p}`" for p in files[:20]) + (
+            f" … ve {len(files) - 20} dosya daha" if len(files) > 20 else ""
+        )
+        self.agent.notes.append(
+            f'[harness] Kullanıcı /undo ile "{restored.label}" isteğinden sonraki dosya '
+            f"değişikliklerini geri aldı. Şu dosyalar o istekten önceki hâlinde: {shown}. "
+            "Bu dosyaların içeriğini hatırladığın gibi varsayma; gerekirse yeniden oku."
+        )
+        remaining = len(self.checkpoints)  # en fazla bu kadar; dosyaya dokunmayan turlar atlanır
+        more = f" Daha geriye gitmek için yine `/undo` ({remaining} tur)." if remaining else ""
+        return (
+            f'"{restored.label}" turundan önceki hâle dönüldü: {restored.summary()}.\n\n'
+            f"{shown}\n\nAjan bunu bir sonraki mesajınla öğrenecek.{more}"
+        )
+
     async def _diff(self) -> str:
         try:
             stat = await self._git("diff", "--stat", "HEAD")
@@ -1021,6 +1109,7 @@ class ChatSession:
 
         self.log = SessionLogger(path)
         self.permissions = self._new_permissions()
+        self.checkpoints = self._new_checkpoints()
         self.agent = self._build_agent(history_from_events(events))
         transcript: list[tuple[str, str]] = []
         anatomies: set[str] = set()

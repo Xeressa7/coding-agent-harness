@@ -49,6 +49,7 @@ from harness.core.events import (
     ModelStarted,
     ModelTextDelta,
     PermissionRequested,
+    QuestionAsked,
     TaskFinished,
     TaskStarted,
     ToolFinished,
@@ -56,6 +57,7 @@ from harness.core.events import (
 )
 from harness.core.session_log import SessionLogger
 from harness.messages import ToolCall
+from harness.tools.ask_user import pick_answer
 
 # İş sürerken de çalışabilen, yalnız bilgi veren komutlar.
 READ_ONLY_COMMANDS = {
@@ -303,6 +305,32 @@ class KeyScreen(ModalScreen[str | None]):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
         self.dismiss(event.value.strip() or None)
+
+
+class QuestionScreen(ModalScreen[str | None]):
+    """Modelin `ask_user` sorusu: numarayla seçenek seçilir ya da cevap yazılır."""
+
+    def __init__(self, question: str, options: tuple[str, ...]) -> None:
+        super().__init__()
+        self.question = question
+        self.options = options
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog"):
+            yield Static(Text("Ajan soruyor"), classes="dialog-title")
+            yield Static(Text(self.question), classes="dialog-text")
+            for number, option in enumerate(self.options, 1):
+                yield Static(Text(f"{number}. {option}"), classes="dialog-text")
+            hint = "Numara ya da kendi cevabın" if self.options else "Cevabın"
+            yield Input(placeholder=hint, id="question-input")
+            yield Static("Enter gönder · boş Enter: cevap yok", classes="dialog-keys")
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(pick_answer(event.value, self.options))
 
 
 class HarnessApp(App[None]):
@@ -603,7 +631,7 @@ class HarnessApp(App[None]):
         self._reply = None
         try:
             async with aclosing(self.agent.run(question)) as stream:
-                send: bool | None = None
+                send: bool | str | None = None
                 while True:
                     try:
                         event = await stream.asend(send)
@@ -661,6 +689,10 @@ class HarnessApp(App[None]):
                             if choice == "always":
                                 self.agent.permissions.grant(call.name)
                             send = choice != "deny"
+                        case QuestionAsked(question=question, options=options):
+                            self.set_status("Cevabın bekleniyor…")
+                            await self.add_flow(f"? ajan soruyor · {question}")
+                            send = await self.push_screen_wait(QuestionScreen(question, options))
                         case ToolStarted(call=call):
                             self.set_status(f"{call.name} çalışıyor…")
                             await self.add_flow(f"● {call.name}")

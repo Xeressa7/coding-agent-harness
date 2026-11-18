@@ -9,6 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from harness.tools.base import Tool, ToolError, ToolOutput, resolve_inside
+from harness.tools.hints import missing_path
 
 
 class DeleteFileParams(BaseModel):
@@ -32,7 +33,7 @@ class DeleteFile(Tool[DeleteFileParams]):
         if path.is_dir():
             raise ToolError(f"{params.path}: bir klasör; delete_file yalnız dosya siler.")
         if not path.is_file():
-            raise ToolError(f"{params.path}: böyle bir dosya yok.")
+            raise ToolError(missing_path(self._root, params.path))
         size = path.stat().st_size
         path.unlink()
         return ToolOutput(

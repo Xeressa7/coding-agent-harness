@@ -19,11 +19,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from harness.environments.local import LocalEnvironment
+from harness.tools.ask_user import AskUser
 from harness.tools.base import Tool, ToolRegistry
 from harness.tools.bash import Bash
 from harness.tools.delete_file import DeleteFile
 from harness.tools.edit_file import EditFile
 from harness.tools.fetch_url import FetchUrl
+from harness.tools.jobs import JobOutput, JobStop
 from harness.tools.list_dir import ListDir
 from harness.tools.read_file import ReadFile
 from harness.tools.search import Search
@@ -39,20 +41,27 @@ ToolName = Literal[
     "delete_file",
     "update_plan",
     "bash",
+    "job_output",
+    "job_stop",
     "fetch_url",
 ]
 
-_TOOL_FACTORIES: dict[ToolName, Callable[[Path], Tool[Any]]] = {
-    "read_file": lambda root: ReadFile(root=root),
-    "list_dir": lambda root: ListDir(root=root),
-    "search": lambda root: Search(root=root),
-    "write_file": lambda root: WriteFile(root=root),
-    "edit_file": lambda root: EditFile(root=root),
-    "delete_file": lambda root: DeleteFile(root=root),
-    "update_plan": lambda root: UpdatePlan(),
-    "bash": lambda root: Bash(LocalEnvironment(root)),
-    "fetch_url": lambda root: FetchUrl(),
+# Araç kurucuları: (çalışma dizini, anatomi, ortam). Ortam bir kayıt defterinde tektir:
+# bash'in başlattığı arka plan işini job_output aynı iş tablosundan okur.
+_TOOL_FACTORIES: dict[ToolName, Callable[[Path, "Anatomy", LocalEnvironment], Tool[Any]]] = {
+    "read_file": lambda root, a, env: ReadFile(root=root),
+    "list_dir": lambda root, a, env: ListDir(root=root),
+    "search": lambda root, a, env: Search(root=root),
+    "write_file": lambda root, a, env: WriteFile(root=root),
+    "edit_file": lambda root, a, env: EditFile(root=root),
+    "delete_file": lambda root, a, env: DeleteFile(root=root),
+    "update_plan": lambda root, a, env: UpdatePlan(),
+    "bash": lambda root, a, env: Bash(env, root=root if a.persistent_cwd else None),
+    "job_output": lambda root, a, env: JobOutput(env.jobs),
+    "job_stop": lambda root, a, env: JobStop(env.jobs),
+    "fetch_url": lambda root, a, env: FetchUrl(),
 }
+_BASH_TOOLS: tuple[ToolName, ...] = ("bash", "job_output", "job_stop")
 _FILE_TOOLS: tuple[ToolName, ...] = (
     "read_file",
     "list_dir",
@@ -80,23 +89,39 @@ class Anatomy(BaseModel):
     test_guard: bool = False  # eski testten doğrulama eksilince not (core/guards.py)
     narrow_scope: bool = False  # talimata "en dar yerde düzelt, testler sözleşmedir" (prompts/)
     context_prune: bool = False  # eşik aşınca eski araç sonuçları not olur (core/pruning.py)
+    # bash'te `cd` sonraki komuta taşınır (tools/bash.py). Alanın varsayılanı kapalı: bu alan
+    # yokken yazılmış kayıtlar o koşuların gerçeğini ("her komut kökten") söylesin.
+    persistent_cwd: bool = False
+    ask_user: bool = False  # belirsiz istekte kullanıcıya soru aracı (tools/ask_user.py)
+    finish_check: bool = False  # "bitti"de eksik varsa bir kez hatırlatır (core/finish_check.py)
 
     def tool_registry(self, root: Path) -> ToolRegistry:
         """Açık araçları, çalışma dizinine bağlı olarak kurar."""
-        return ToolRegistry([_TOOL_FACTORIES[name](root) for name in self.tools])
+        environment = LocalEnvironment(root)
+        tools = [_TOOL_FACTORIES[name](root, self, environment) for name in self.tools]
+        if self.ask_user:
+            tools.append(AskUser())
+        return ToolRegistry(tools)
 
 
 PRESETS: dict[str, Anatomy] = {
     # Seviye 0 çıplak modeldir: proje bağlamı da eklenmez (`raw+agents_md` ile açılır).
     "raw": Anatomy(name="raw", prompt="raw", save_code_blocks=True, agents_md=False),
     "files": Anatomy(name="files", tools=_FILE_TOOLS),
-    "bash": Anatomy(name="bash", tools=(*_FILE_TOOLS, "bash")),
-    "full": Anatomy(name="full", tools=(*_FILE_TOOLS, "bash", "fetch_url")),
+    "bash": Anatomy(
+        name="bash", tools=(*_FILE_TOOLS, *_BASH_TOOLS), persistent_cwd=True, ask_user=True
+    ),
+    "full": Anatomy(
+        name="full",
+        tools=(*_FILE_TOOLS, *_BASH_TOOLS, "fetch_url"),
+        persistent_cwd=True,
+        ask_user=True,
+    ),
 }
 DEFAULT_PRESET = "bash"  # standart harness: komut çalıştırır, her çağrıda izin sorar
 
 # Preset'in üstüne `+ad` ile açılıp `-ad` ile kapatılan katmanlar: `bash+loop_guard`.
-# Varsayılanı açık olan katman (output_limit) `-ad` ile kapatılır.
+# Varsayılanı açık olan katman (output_limit; bash/full'da persistent_cwd) `-ad` ile kapatılır.
 LAYERS: dict[str, str] = {
     "loop_guard": "aynı araç çağrısı art arda 3 kez gelince modeli uyarır, 5'te durdurur",
     "output_limit": "40.000 karakteri aşan araç çıktısının ortasını keser, modele ve kayda söyler",
@@ -105,6 +130,9 @@ LAYERS: dict[str, str] = {
     "test_guard": "düzenleme görevden önce var olan bir testten doğrulama silerse modele sorar",
     "narrow_scope": "talimata ekler: en dar yerde düzelt, mevcut testler ve belgeler sözleşmedir",
     "context_prune": "bağlam 60k token'ı aşınca son 5 adım dışındaki sonuçları nota çevirir",
+    "persistent_cwd": "bash'te `cd` sonraki komutlara taşınır; kök dışına çıkmaz",
+    "ask_user": "belirsiz istekte kullanıcıya soru sorma aracı; -p'de cevap yok, varsayım yazar",
+    "finish_check": "bitirirken: düzenlemeden sonra komut yoksa ya da plan yarımsa bir kez sorar",
 }
 
 

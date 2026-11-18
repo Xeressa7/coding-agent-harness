@@ -21,6 +21,7 @@ from typing import Any
 from uuid import uuid4
 
 from harness.core.anatomy import Anatomy
+from harness.core.checkpoints import Checkpoints, CheckpointUnavailable
 from harness.core.code_blocks import extract_code_blocks, save_code_blocks
 from harness.core.context import grouped, limit_output
 from harness.core.events import (
@@ -33,11 +34,14 @@ from harness.core.events import (
     ModelStarted,
     ModelTextDelta,
     PermissionRequested,
+    QuestionAsked,
     TaskFinished,
     TaskStarted,
     ToolFinished,
     ToolStarted,
 )
+from harness.core.finish_check import FinishCheck
+from harness.core.finish_check import note as finish_note
 from harness.core.guards import RepeatGuard, TestGuard
 from harness.core.permissions import Decision, PermissionManager
 from harness.core.project_context import CtxMemory, MemoryUnavailable, load_instructions
@@ -51,7 +55,8 @@ from harness.messages import (
     ToolResult,
     UserMessage,
 )
-from harness.tools.base import ToolRegistry
+from harness.tools.ask_user import answered, question_of
+from harness.tools.base import ToolOutcome, ToolRegistry
 
 # Hafızanın "dosyaya dokununca hatırlat" kancası hangi araçlarda çalışır (ctx'in araç adlarıyla).
 _RECALL_TOOLS = {"read_file": "Read", "edit_file": "Edit", "write_file": "Write"}
@@ -80,6 +85,7 @@ class Agent:
         root: Path | None = None,
         history: Sequence[Message] = (),
         memory_session_id: str | None = None,
+        checkpoints: Checkpoints | None = None,
     ) -> None:
         """root: harness'ın kendisinin dosya yazdığı çalışma dizini (seviye 0 kod blokları).
 
@@ -89,6 +95,9 @@ class Agent:
         memory_session_id: hafıza katmanının ctx'e verdiği oturum kimliği. ctx aynı notu
         aynı kimlikte bir kez verir; sohbet ajanı yeniden kurarken (model/katman değişimi)
         aynı kimliği geçirir ki geçmişte zaten olan notlar tekrar eklenmesin.
+
+        checkpoints: her görevden önce çalışma dizininin görüntüsünü alır (sohbetin `/undo`'su).
+        Model bunu görmez; katman değil, kullanıcının güvenlik ağıdır.
         """
         if anatomy is not None and anatomy.save_code_blocks and root is None:
             raise ValueError("Kod bloklarını kaydeden anatomi bir çalışma dizini (root) ister.")
@@ -110,6 +119,10 @@ class Agent:
             else None
         )
         self.history: list[Message] = [SystemMessage(text=system_prompt), *history]
+        self._checkpoints = checkpoints
+        # Bir sonraki görevin başına eklenecek harness notları (ör. "kullanıcı geri aldı").
+        # Görev metnine girer: kayıtta görünür, oturuma devam edilince de geçmişte kalır.
+        self.notes: list[str] = []
 
     async def _add_project_context(self) -> AsyncGenerator[HarnessIntervened]:
         """AGENTS.md ve hafıza haritasını sistem talimatının sonuna ekler (adım 0).
@@ -179,11 +192,20 @@ class Agent:
         count = sum(line.startswith("- ") for line in notes.splitlines())
         return f"[harness · hafıza]\n{notes}", f"{path} → {count} not"
 
-    async def run(self, task: str) -> AsyncGenerator[Event, bool | None]:
+    async def run(self, task: str) -> AsyncGenerator[Event, bool | str | None]:
+        request = task
+        if self.notes:
+            task = "\n\n".join([*self.notes, task])
+            self.notes.clear()
         self.history.append(UserMessage(text=task))
         guard = RepeatGuard() if self._anatomy and self._anatomy.loop_guard else None
         tests = TestGuard(self._root) if self._layers.test_guard and self._root else None
         pruner = ContextPruner() if self._layers.context_prune else None
+        finish = (
+            FinishCheck(can_run_commands=any(s.name == "bash" for s in self._tools.specs()))
+            if self._layers.finish_check
+            else None
+        )
         started = perf_counter()
         step = 0
         yield TaskStarted(
@@ -195,6 +217,20 @@ class Agent:
             root=str(self._root) if self._root else None,
             timestamp=datetime.now(UTC),
         )
+        if self._checkpoints is not None and self._checkpoints.broken is None:
+            try:
+                tree = await asyncio.to_thread(self._checkpoints.save, request)
+            except CheckpointUnavailable as exc:
+                action, summary = "skip", f"geri alma bu oturumda kapalı: {exc}"
+            else:
+                action, summary = "save", f"tur öncesi görüntü {tree[:8]}"
+            yield HarnessIntervened(
+                step=0,
+                layer="checkpoint",
+                action=action,
+                summary=summary,
+                timestamp=datetime.now(UTC),
+            )
         try:
             if not self._prepared:  # yalnız ilk görevde: talimat bir kez kurulur
                 self._prepared = True
@@ -260,6 +296,17 @@ class Agent:
                 )
 
                 if not reply.tool_calls:
+                    missing = finish.check(reply.text) if finish is not None else None
+                    if missing is not None:  # bir kez: eksik söylenir, döngü bir adım sürer
+                        self.history.append(UserMessage(text=finish_note(missing)))
+                        yield HarnessIntervened(
+                            step=step,
+                            layer="finish_check",
+                            action="warn",
+                            summary=missing,
+                            timestamp=datetime.now(UTC),
+                        )
+                        continue
                     if self._anatomy and self._anatomy.save_code_blocks and self._root:
                         blocks, unnamed = extract_code_blocks(reply.text)
                         saved, rejected = save_code_blocks(blocks, self._root)
@@ -334,7 +381,23 @@ class Agent:
                     if tests is not None:
                         tests.before(call)
                     tool_started = perf_counter()
-                    outcome = await self._tools.execute(call)
+                    asked = question_of(call) if self._tools.get(call.name) else None
+                    if asked is not None:  # soruyu ön yüz sorar, cevabı asend ile verir
+                        reply_text = yield QuestionAsked(
+                            step=step,
+                            call_id=call.id,
+                            question=asked.question,
+                            options=tuple(asked.options),
+                            timestamp=datetime.now(UTC),
+                        )
+                        given = answered(asked, reply_text if isinstance(reply_text, str) else None)
+                        outcome = ToolOutcome(
+                            result=ToolResult(tool_call_id=call.id, content=given.content),
+                            summary=given.summary,
+                            details=given.details,
+                        )
+                    else:
+                        outcome = await self._tools.execute(call)
                     tool_duration = perf_counter() - tool_started
                     result = outcome.result
                     # Önce aracın kendi çıktısı kesilir; harness notları sonra eklenir. Böylece
@@ -359,6 +422,8 @@ class Agent:
                         result = result.model_copy(update={"content": content})
                     removed = tests.after(call) if tests is not None else None
                     if removed is not None:  # eski testten doğrulama eksildi: modele sorulur
+                        if finish is not None:
+                            finish.guard_warned()
                         content = f"{result.content}\n\n{removed.message()}"
                         result = result.model_copy(update={"content": content})
                         yield HarnessIntervened(
@@ -396,6 +461,8 @@ class Agent:
                             timestamp=datetime.now(UTC),
                         )
                     self.history.append(result)
+                    if finish is not None:
+                        finish.saw(call, result, outcome.details)
                     yield ToolFinished(
                         call=call,
                         result=result,

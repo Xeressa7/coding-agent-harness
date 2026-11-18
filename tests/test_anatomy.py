@@ -66,9 +66,10 @@ async def test_files_preset_offers_the_file_tools(tmp_path: Path) -> None:
     ]
 
 
-async def test_bash_preset_adds_only_bash_on_top_of_files(tmp_path: Path) -> None:
+async def test_bash_preset_adds_bash_and_its_job_tools_on_top_of_files(tmp_path: Path) -> None:
     files = await offered_tool_names(get_preset("files"), tmp_path)
-    assert await offered_tool_names(get_preset("bash"), tmp_path) == [*files, "bash"]
+    bash = await offered_tool_names(get_preset("bash"), tmp_path)
+    assert bash == [*files, "bash", "job_output", "job_stop", "ask_user"]
 
 
 async def test_every_run_records_its_anatomy(tmp_path: Path) -> None:

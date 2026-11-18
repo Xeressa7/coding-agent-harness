@@ -85,7 +85,7 @@ async def _run_turn(
     websocket: WebSocket, agent: Agent, task: str, log: SessionLogger | None
 ) -> None:
     stream = agent.run(task)
-    send: bool | None = None
+    send: bool | str | None = None
     try:
         while True:
             event = await stream.asend(send)

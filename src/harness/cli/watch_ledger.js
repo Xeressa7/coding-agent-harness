@@ -25,6 +25,7 @@
     loop_guard: "Takılma uyarısı", output_limit: "Çıktı sınırı",
     agents_md: "Proje talimatı", memory: "Hafıza", code_blocks: "Kod blokları",
     test_guard: "Test koruyucusu", context_prune: "Bağlam budama",
+    checkpoint: "Kontrol noktası", finish_check: "Bitiş kontrolü",
   };
   const LAYER_HELP = {
     loop_guard: "Aynı araç çağrısı art arda gelince harness modeli uyarır ya da çağrıyı durdurur.",
@@ -34,11 +35,13 @@
     code_blocks: "Seviye 0: modelin cevabındaki adlı kod bloklarını harness dosyaya yazar.",
     test_guard: "Dosya araçlarıyla yapılan düzenleme görevden önce var olan bir test dosyasından doğrulama satırı eksiltirse harness bunu sonuca not olarak yazar; engellemez.",
     context_prune: "Bağlam 60k token'ı aşınca son 5 adım dışındaki araç sonuçları kısa bir notla değiştirilir; seyrek ve toplu, önbellek bir kez kırılsın diye.",
+    finish_check: "Model bitirmek isteyince harness, model çağırmadan, olaylara bakar: son düzenlemeden sonra komut çalıştı mı, planda yarım adım var mı, test koruyucusunun uyarısı özette cevaplandı mı. Eksik varsa bir kez hatırlatır.",
+    checkpoint: "Sohbette her turdan önce çalışma dizininin görüntüsü ayrı bir gölge git deposuna alınır; /undo dosya değiştiren son turu geri alır. Model bunu görmez.",
   };
   const ACTIONS = {
     warn: "modele hatırlatıldı", block: "çağrı çalıştırılmadı", truncate: "ortası kesildi",
     inject: "talimata eklendi", recall: "sonuca not eklendi", skip: "bir şey eklemedi",
-    prune: "eski sonuçlar çıkarıldı",
+    prune: "eski sonuçlar çıkarıldı", save: "alındı",
   };
   // Eski kayıtlarda harness her araç sonucunu 2.000+2.000 karaktere sessizce kesiyordu.
   const OLD_CUT = /… \[\d+ karakter kısaltıldı\] …/;

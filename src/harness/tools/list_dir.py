@@ -10,6 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from harness.tools.base import Tool, ToolError, ToolOutput, resolve_inside
+from harness.tools.hints import missing_path
 from harness.tools.search import SKIPPED_DIRS
 
 _MAX_ENTRIES = 300
@@ -38,7 +39,7 @@ class ListDir(Tool[ListDirParams]):
     async def run(self, params: ListDirParams) -> ToolOutput:
         folder = resolve_inside(self._root, params.path)
         if not folder.is_dir():
-            raise ToolError(f"{params.path}: böyle bir klasör yok.")
+            raise ToolError(missing_path(self._root, params.path, want_dir=True))
         lines: list[str] = []
         counts = {"dirs": 0, "files": 0}
         total = self._walk(folder, params.depth, 0, lines, counts)

@@ -81,6 +81,7 @@ from harness.core.events import (
     ModelStarted,
     ModelTextDelta,
     PermissionRequested,
+    QuestionAsked,
     TaskFinished,
     TaskStarted,
     ToolFinished,
@@ -101,6 +102,7 @@ from harness.llm.providers import (
 )
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage, ToolCall
+from harness.tools.ask_user import pick_answer
 from harness.tools.base import short
 
 app = typer.Typer(
@@ -261,7 +263,9 @@ def sessions_dir(root: Path) -> Path:
     return project_sessions_dir(root, SESSIONS_HOME)
 
 
-def chat_session(root: Path, config: RunConfig, http: httpx.AsyncClient) -> ChatSession:
+def chat_session(
+    root: Path, config: RunConfig, http: httpx.AsyncClient, *, checkpoints: bool = True
+) -> ChatSession:
     """Gerçek modelle sohbet; model listesi ve istemci aynı HTTP bağlantısını paylaşır."""
     return ChatSession(
         root=root,
@@ -278,6 +282,7 @@ def chat_session(root: Path, config: RunConfig, http: httpx.AsyncClient) -> Chat
         open_url=open_in_browser,
         theme=load_settings().theme,
         max_steps=config.max_steps,
+        checkpoints=checkpoints,
     )
 
 
@@ -398,7 +403,7 @@ def run_once(
 
     async def run() -> TurnOutcome:
         async with httpx.AsyncClient(timeout=120) as http:
-            session = chat_session(root, config, http)
+            session = chat_session(root, config, http, checkpoints=False)  # tek tur: /undo yok
             if resume:
                 session.resume_latest()
             grant(session, allow)
@@ -441,7 +446,7 @@ async def run_turn(
             if quiet:
                 status.stop()
             stream = agent.run(question)
-            send: bool | None = None
+            send: bool | str | None = None
             while True:
                 try:
                     event = await stream.asend(send)
@@ -457,6 +462,9 @@ async def run_turn(
                 if isinstance(event, PermissionRequested):
                     status.stop()
                     send = _permission(agent, event, interactive=not quiet)
+                elif isinstance(event, QuestionAsked):
+                    status.stop()
+                    send = None if quiet else _question(event)  # -p: cevap yok, varsayım
                 elif quiet:
                     if isinstance(event, ModelReplied) and not event.tool_calls and event.text:
                         console.print(event.text, markup=False, highlight=False, soft_wrap=True)
@@ -489,6 +497,8 @@ async def run_turn(
                     status.stop()
                     console.print(Text(code_blocks_summary(event), style="h.muted"))
                 elif isinstance(event, HarnessIntervened):
+                    if event.layer == "checkpoint" and event.action == "save":
+                        continue  # her turda olur; kayıtta ve panelde görünür
                     status.stop()
                     console.print(
                         Text(f"harness · {intervention_summary(event)}", style="h.harness")
@@ -526,6 +536,19 @@ async def run_turn(
 
 def tool_trace(event: ToolFinished) -> Text:
     return Text(f"  {live_outcome(event)}", style="h.warn" if event.result.is_error else "h.muted")
+
+
+def _question(event: QuestionAsked) -> str | None:
+    """Modelin sorusu; numara seçeneği seçer, başka metin kendi cevabıdır, boş cevap yok."""
+    console.print(Text(f"Ajan soruyor: {event.question}", style="h.agent"))
+    for number, option in enumerate(event.options, 1):
+        console.print(Text(f"  {number}. {option}", style="h.muted"))
+    hint = "numara ya da kendi cevabın; boş: cevap yok" if event.options else "boş: cevap yok"
+    try:
+        typed = console.input(f"[h.muted]({hint})[/] › ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    return pick_answer(typed, event.options)
 
 
 def _permission(agent: Agent, event: PermissionRequested, *, interactive: bool) -> bool:
@@ -879,7 +902,7 @@ def demo(
 
     async def run() -> None:
         stream = agent.run(DEMO_TASK)
-        send: bool | None = None
+        send: bool | str | None = None
         try:
             while True:
                 event = await stream.asend(send)

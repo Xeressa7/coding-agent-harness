@@ -16,7 +16,8 @@ from typing import cast
 
 from pydantic import TypeAdapter
 
-from harness.core.events import Event, ModelReplied, TaskStarted, ToolFinished
+from harness.core.events import Event, HarnessIntervened, ModelReplied, TaskStarted, ToolFinished
+from harness.core.finish_check import note as finish_note
 from harness.messages import AssistantMessage, Message, UserMessage
 
 _EVENT = TypeAdapter[Event](Event)
@@ -66,6 +67,12 @@ def history_from_events(events: Sequence[Event]) -> list[Message]:
             else:
                 pending = [reply]
                 waiting = {call.id for call in event.tool_calls}
+        elif (
+            isinstance(event, HarnessIntervened)
+            and event.layer == "finish_check"
+            and event.action == "warn"
+        ):
+            history.append(UserMessage(text=finish_note(event.summary)))  # modele giden metin
         elif isinstance(event, ToolFinished) and event.call.id in waiting:
             pending.append(event.result)
             waiting.discard(event.call.id)

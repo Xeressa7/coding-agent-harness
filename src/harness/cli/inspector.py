@@ -16,6 +16,7 @@ from harness.core.events import (
     ModelStarted,
     ModelTextDelta,
     PermissionRequested,
+    QuestionAsked,
     TaskFinished,
     TaskStarted,
     ToolFinished,
@@ -53,6 +54,8 @@ LAYER_NAMES = {
     "memory": "Hafıza",
     "test_guard": "Test koruyucusu",
     "context_prune": "Bağlam budama",
+    "checkpoint": "Kontrol noktası",
+    "finish_check": "Bitiş kontrolü",
 }
 _ACTIONS = {
     "warn": "modele hatırlatıldı",
@@ -62,6 +65,7 @@ _ACTIONS = {
     "recall": "sonuca not eklendi",
     "skip": "bir şey eklemedi",
     "prune": "eski araç sonuçları bağlamdan çıkarıldı",
+    "save": "alındı (/undo ile geri dönülebilir)",
 }
 
 
@@ -217,6 +221,9 @@ def _event_html(event: Event) -> str:
         case PermissionRequested(call=call):
             title = f"İzin istendi · {call.name} · {call.id}"
             detail = _pre(call.arguments)
+        case QuestionAsked(question=question, options=options):
+            title = f"Ajan kullanıcıya sordu · adım {event.step}"
+            detail = _pre("\n".join([question, *(f"{i}. {o}" for i, o in enumerate(options, 1))]))
         case ToolStarted(call=call):
             title = f"Araç başladı · {call.name} · {call.id}"
             detail = _pre(call.arguments)

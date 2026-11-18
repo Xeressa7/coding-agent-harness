@@ -26,6 +26,7 @@ from harness.core.events import (
     ModelStarted,
     ModelTextDelta,
     PermissionRequested,
+    QuestionAsked,
     TaskFinished,
     TaskStarted,
     ToolFinished,
@@ -198,6 +199,8 @@ def build_turns(events: list[Event]) -> list[Turn]:
                 step.text = event.text
                 step.reasoning = event.reasoning
                 step.final = not event.tool_calls
+            case QuestionAsked():
+                pass  # bekleyiş aracın kendi süresindedir; cevap ToolFinished sonucunda
             case PermissionRequested(call=call):
                 wait = Wait(name=call.name, start=at(event), end=None, allowed=None)
                 waiting[call.id] = wait

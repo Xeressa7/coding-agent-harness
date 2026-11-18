@@ -80,6 +80,20 @@ class PermissionRequested(_Event):
     summary: str = ""  # aracın kendi anlatımı: "notes.txt", "$ pytest -q"
 
 
+class QuestionAsked(_Event):
+    """Model `ask_user` ile kullanıcıya soru sordu; cevap (metin) ön yüzden `asend` ile gelir.
+
+    Cevapsız geçilirse (tek görevlik koşu, eski tüketici) model varsayımla devam eder.
+    Cevabın kendisi aynı çağrının `ToolFinished` sonucundadır.
+    """
+
+    kind: Literal["question_asked"] = "question_asked"
+    step: int
+    call_id: str
+    question: str
+    options: tuple[str, ...] = ()
+
+
 class ToolStarted(_Event):
     """Araç çalışmaya başladı. `category` ve `summary` telemetri içindir, modele gitmez."""
 
@@ -156,6 +170,7 @@ Event = Annotated[
     | ModelReasoningDelta
     | ModelReplied
     | PermissionRequested
+    | QuestionAsked
     | ToolStarted
     | ToolFinished
     | CodeBlocksSaved

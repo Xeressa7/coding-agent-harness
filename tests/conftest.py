@@ -6,6 +6,7 @@ import pytest
 
 from harness.cli import app as cli
 from harness.cli import commands, themes
+from harness.core import checkpoints
 from harness.core.config import Settings, load_settings, save_settings
 from harness.llm import credentials, providers
 
@@ -15,6 +16,16 @@ def sessions_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     home = tmp_path / "harness-sessions"
     monkeypatch.setattr(cli, "SESSIONS_HOME", home)
     monkeypatch.setattr(cli, "EVALS_HOME", tmp_path / "harness-evals")
+    return home
+
+
+@pytest.fixture(autouse=True)
+def checkpoints_home(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Gölge görüntü deposu geçici klasörde; çalışma dizininin (tmp_path) dışında durur."""
+    home = tmp_path_factory.mktemp("checkpoints")
+    monkeypatch.setattr(checkpoints, "CHECKPOINTS_HOME", home)
     return home
 
 

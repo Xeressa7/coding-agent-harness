@@ -5,6 +5,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from harness.tools.base import Tool, ToolError, ToolOutput, resolve_inside
+from harness.tools.hints import missing_path
 
 MAX_LINES = 2000
 MAX_CHARS = 30_000  # çıktı sınırının (40.000) altında: okunan dosya ortadan kesilmez
@@ -38,7 +39,7 @@ class ReadFile(Tool[ReadFileParams]):
     async def run(self, params: ReadFileParams) -> ToolOutput:
         path = resolve_inside(self._root, params.path)
         if not path.is_file():
-            raise ToolError(f"{params.path}: böyle bir dosya yok.")
+            raise ToolError(missing_path(self._root, params.path))
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
         except UnicodeDecodeError as e:

@@ -20,6 +20,7 @@ from harness.core.events import (
     ModelStarted,
     ModelTextDelta,
     PermissionRequested,
+    QuestionAsked,
     TaskFinished,
     TaskStarted,
     ToolFinished,
@@ -72,6 +73,8 @@ def render(console: Console, event: Event) -> None:
             )
         case PermissionRequested(call=call):
             console.print(Text.assemble(("  ⚠ izin isteniyor: ", "h.warn"), _describe(call)))
+        case QuestionAsked(question=question):
+            console.print(Text.assemble(("  ? ajan soruyor: ", "h.warn"), question))
         case (
             ContextAssembled()
             | ModelStarted()

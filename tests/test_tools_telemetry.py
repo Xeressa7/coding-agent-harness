@@ -206,7 +206,7 @@ async def test_events_carry_category_summary_and_outcome_for_the_timeline(projec
 def test_permission_follows_the_tool_category(project: Path) -> None:
     tools = get_preset("full").tool_registry(project)
     permissions = PermissionManager(project, tools)
-    free = {"read_file", "list_dir", "search", "update_plan"}
+    free = {"read_file", "list_dir", "search", "update_plan", "job_output", "ask_user"}
     for spec in tools.specs():
         expected = Decision.ALLOW if spec.name in free else Decision.ASK
         assert permissions.policy(spec.name) is expected, spec.name

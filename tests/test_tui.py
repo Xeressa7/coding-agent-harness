@@ -19,6 +19,7 @@ from harness.cli.tui import (
     KeyScreen,
     PermissionDialog,
     PickerScreen,
+    QuestionScreen,
     ThoughtBlock,
 )
 from harness.core.anatomy import get_preset
@@ -41,7 +42,7 @@ from harness.messages import (
 pytestmark = pytest.mark.anyio
 
 
-def make_app(model: object, tmp_path: Path) -> HarnessApp:
+def make_app(model: object, tmp_path: Path, anatomy: str = "files") -> HarnessApp:
     # Concrete LLM doubles below satisfy the shared complete/stream protocols.
     assert isinstance(model, (ScriptedLLM, ControlledModel, ThinkingModel))
 
@@ -50,7 +51,7 @@ def make_app(model: object, tmp_path: Path) -> HarnessApp:
 
     session = ChatSession(
         root=tmp_path,
-        anatomy=get_preset("files"),
+        anatomy=get_preset(anatomy),
         provider=get_provider("chatgpt"),
         model="test-model",
         effort=None,
@@ -658,3 +659,31 @@ async def test_slash_opens_palette_suggests_and_tab_completes(tmp_path: Path) ->
         await pilot.pause()
         assert not app.query(".command-message")  # onay sohbete değil bildirime düştü
         assert any("açık" in n.message for n in app._notifications)  # type: ignore[attr-defined]
+
+
+async def test_question_screen_answers_ask_user_with_an_option_number(tmp_path: Path) -> None:
+    arguments = json.dumps({"question": "Sayaç gizlensin mi?", "options": ["evet", "hayır"]})
+    model = ScriptedLLM(
+        [
+            AssistantMessage(tool_calls=(ToolCall(id="q1", name="ask_user", arguments=arguments),)),
+            AssistantMessage(text="Gizledim."),
+        ]
+    )
+    app = make_app(model, tmp_path, "files+ask_user")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.submit("sayacı düzelt")
+        for _ in range(50):
+            await pilot.pause()
+            if isinstance(app.screen, QuestionScreen):
+                break
+        screen = app.screen
+        assert isinstance(screen, QuestionScreen) and screen.options == ("evet", "hayır")
+        screen.query_one(Input).value = "1"
+        await screen.query_one(Input).action_submit()
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert not app.busy and not app.failed
+    finished = [e for e in read_session(app.session_log.path) if e.kind == "tool_finished"]
+    assert finished[0].result.content == "Kullanıcının cevabı: evet"  # pyright: ignore[reportAttributeAccessIssue]

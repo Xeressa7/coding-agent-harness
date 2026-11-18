@@ -11,7 +11,13 @@ import pytest
 from typer.testing import CliRunner
 
 from harness.cli import app as cli
-from harness.cli.commands import ChatSession, is_command, matching_commands, usage_text
+from harness.cli.commands import (
+    CHAT_STEP_LIMIT,
+    ChatSession,
+    is_command,
+    matching_commands,
+    usage_text,
+)
 from harness.core.anatomy import get_preset
 from harness.core.config import project_sessions_dir
 from harness.core.events import (
@@ -509,7 +515,7 @@ async def test_memory_session_id_survives_rebuilds_but_not_a_new_session(tmp_pat
 
 async def test_step_limit_is_configurable_and_survives_rebuilds(tmp_path: Path) -> None:
     session, _ = make_session(tmp_path)
-    assert session.agent._max_steps == 50  # type: ignore[attr-defined]  # varsayılan
+    assert session.agent._max_steps == CHAT_STEP_LIMIT == 150  # type: ignore[attr-defined]  # varsayılan
     session.max_steps = 200  # `harness --max-steps 200`
     await session.run("/anatomy bash")  # ajan yeniden kurulur
     assert session.agent._max_steps == 200  # type: ignore[attr-defined]

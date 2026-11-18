@@ -108,7 +108,9 @@ async def test_output_limit_layer_can_be_switched_off(tmp_path: Path) -> None:
     defaults = {"output_limit", "agents_md"}
     assert compose("files", {"agents_md"}) == "files-output_limit"
     assert compose("files", {*defaults, "loop_guard"}) == "files+loop_guard"
-    assert compose("bash", defaults) == "bash"
+    bash_defaults = {*defaults, "persistent_cwd", "ask_user"}  # bash'te varsayılan açık
+    assert compose("bash", bash_defaults) == "bash"
+    assert compose("bash", defaults) == "bash-persistent_cwd-ask_user"
 
 
 async def test_read_file_stops_at_its_budget_and_names_the_next_start_line(
