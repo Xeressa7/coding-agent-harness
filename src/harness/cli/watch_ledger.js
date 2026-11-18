@@ -24,7 +24,7 @@
   const LAYERS = {
     loop_guard: "Takılma uyarısı", output_limit: "Çıktı sınırı",
     agents_md: "Proje talimatı", memory: "Hafıza", code_blocks: "Kod blokları",
-    test_guard: "Test koruyucusu",
+    test_guard: "Test koruyucusu", context_prune: "Bağlam budama",
   };
   const LAYER_HELP = {
     loop_guard: "Aynı araç çağrısı art arda gelince harness modeli uyarır ya da çağrıyı durdurur.",
@@ -33,10 +33,12 @@
     memory: "agent-context: görev başında not haritası, dosya okunup yazılınca o dosyayı anan notlar.",
     code_blocks: "Seviye 0: modelin cevabındaki adlı kod bloklarını harness dosyaya yazar.",
     test_guard: "Dosya araçlarıyla yapılan düzenleme görevden önce var olan bir test dosyasından doğrulama satırı eksiltirse harness bunu sonuca not olarak yazar; engellemez.",
+    context_prune: "Bağlam 60k token'ı aşınca son 5 adım dışındaki araç sonuçları kısa bir notla değiştirilir; seyrek ve toplu, önbellek bir kez kırılsın diye.",
   };
   const ACTIONS = {
     warn: "modele hatırlatıldı", block: "çağrı çalıştırılmadı", truncate: "ortası kesildi",
     inject: "talimata eklendi", recall: "sonuca not eklendi", skip: "bir şey eklemedi",
+    prune: "eski sonuçlar çıkarıldı",
   };
   // Eski kayıtlarda harness her araç sonucunu 2.000+2.000 karaktere sessizce kesiyordu.
   const OLD_CUT = /… \[\d+ karakter kısaltıldı\] …/;

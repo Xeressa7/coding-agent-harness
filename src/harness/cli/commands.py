@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
-from harness.cli.inspector import reread_text
+from harness.cli.inspector import reread_text, work_rows
 from harness.cli.themes import THEME_FILE, available, palette_for
 from harness.cli.watch import WatchServer
 from harness.core.agent import Agent
@@ -34,7 +34,7 @@ from harness.core.events import (
     TaskStarted,
     ToolFinished,
 )
-from harness.core.metrics import read_stats
+from harness.core.metrics import read_stats, work_stats
 from harness.core.permissions import Decision, PermissionManager
 from harness.core.project_context import ctx_command
 from harness.core.session_log import (
@@ -1115,6 +1115,9 @@ def usage_text(events: list[Event]) -> str:
     reading = read_stats(events)
     if reading.lines_read:
         rows.append(("Tekrar okunan satır", reread_text(reading)))
+    work = work_stats(events)
+    if work.steps:
+        rows.extend(work_rows(work))
     if interventions:
         listed = ", ".join(f"{n} ×{c}" for n, c in interventions.most_common())
         rows.append(("Harness müdahalesi", f"{interventions.total()} ({listed})"))

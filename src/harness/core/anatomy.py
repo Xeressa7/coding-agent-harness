@@ -79,6 +79,7 @@ class Anatomy(BaseModel):
     memory: bool = False  # agent-context hafızası: harita + dosyaya dokununca not (ctx)
     test_guard: bool = False  # eski testten doğrulama eksilince not (core/guards.py)
     narrow_scope: bool = False  # talimata "en dar yerde düzelt, testler sözleşmedir" (prompts/)
+    context_prune: bool = False  # eşik aşınca eski araç sonuçları not olur (core/pruning.py)
 
     def tool_registry(self, root: Path) -> ToolRegistry:
         """Açık araçları, çalışma dizinine bağlı olarak kurar."""
@@ -103,6 +104,7 @@ LAYERS: dict[str, str] = {
     "memory": "agent-context hafızası: görev başında not haritası, dosya okununca ilgili notlar",
     "test_guard": "düzenleme görevden önce var olan bir testten doğrulama silerse modele sorar",
     "narrow_scope": "talimata ekler: en dar yerde düzelt, mevcut testler ve belgeler sözleşmedir",
+    "context_prune": "bağlam 60k token'ı aşınca son 5 adım dışındaki sonuçları nota çevirir",
 }
 
 

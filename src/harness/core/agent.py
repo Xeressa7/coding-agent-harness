@@ -41,6 +41,7 @@ from harness.core.events import (
 from harness.core.guards import RepeatGuard, TestGuard
 from harness.core.permissions import Decision, PermissionManager
 from harness.core.project_context import CtxMemory, MemoryUnavailable, load_instructions
+from harness.core.pruning import ContextPruner
 from harness.llm.base import LLMClient, StreamingLLMClient
 from harness.messages import (
     AssistantMessage,
@@ -182,6 +183,7 @@ class Agent:
         self.history.append(UserMessage(text=task))
         guard = RepeatGuard() if self._anatomy and self._anatomy.loop_guard else None
         tests = TestGuard(self._root) if self._layers.test_guard and self._root else None
+        pruner = ContextPruner() if self._layers.context_prune else None
         started = perf_counter()
         step = 0
         yield TaskStarted(
@@ -199,6 +201,22 @@ class Agent:
                 async for note in self._add_project_context():
                     yield note
             for step in range(1, self._max_steps + 1):
+                if pruner is not None:
+                    last = next(
+                        (m for m in reversed(self.history) if isinstance(m, AssistantMessage)),
+                        None,
+                    )
+                    used = last.usage.input_tokens if last and last.usage else None
+                    checked = pruner.check(self.history, used)
+                    if checked is not None:  # geçmiş bir kez kısalır; önbellek o noktadan kırılır
+                        self.history[:], report = checked
+                        yield HarnessIntervened(
+                            step=step,
+                            layer="context_prune",
+                            action="prune",
+                            summary=report.summary(),
+                            timestamp=datetime.now(UTC),
+                        )
                 messages = tuple(self.history)
                 specs = tuple(self._tools.specs())
                 yield ContextAssembled(

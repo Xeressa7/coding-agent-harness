@@ -21,7 +21,7 @@ from harness.core.events import (
     ToolFinished,
     ToolStarted,
 )
-from harness.core.metrics import ReadStats, read_stats
+from harness.core.metrics import ReadStats, WorkStats, read_stats, work_stats
 from harness.core.session_log import read_session
 from harness.messages import AssistantMessage, Message, ToolResult
 
@@ -52,6 +52,7 @@ LAYER_NAMES = {
     "agents_md": "Proje talimatı",
     "memory": "Hafıza",
     "test_guard": "Test koruyucusu",
+    "context_prune": "Bağlam budama",
 }
 _ACTIONS = {
     "warn": "modele hatırlatıldı",
@@ -60,6 +61,7 @@ _ACTIONS = {
     "inject": "sistem talimatına eklendi",
     "recall": "sonuca not eklendi",
     "skip": "bir şey eklemedi",
+    "prune": "eski araç sonuçları bağlamdan çıkarıldı",
 }
 
 
@@ -75,6 +77,23 @@ def reread_text(reading: ReadStats) -> str:
         return "—"
     counts = f"{reading.reread_lines:,} / {reading.lines_read:,}".replace(",", ".")
     return f"%{reading.reread_ratio * 100:.0f} ({counts})"
+
+
+def work_rows(work: WorkStats) -> list[tuple[str, str]]:
+    """İlk düzenleme, doğrulama kuyruğu, tepe bağlam: maliyetin nereden geldiğinin özeti."""
+    if work.first_edit_step is None:
+        first = "düzenleme yok" if work.steps else "—"
+    else:
+        share = work.first_edit_share
+        first = f"{work.first_edit_step}. çağrı" + (f" (%{share * 100:.0f})" if share else "")
+    return [
+        ("İlk düzenleme", first),
+        (
+            "Son düzenlemeden sonra",
+            f"{work.after_last_edit} çağrı" if work.after_last_edit is not None else "—",
+        ),
+        ("Tepe bağlam", f"{work.peak_context:,}".replace(",", ".") if work.peak_context else "—"),
+    ]
 
 
 def summary_items(events: Sequence[Event]) -> list[tuple[str, str]]:
@@ -120,6 +139,7 @@ def summary_items(events: Sequence[Event]) -> list[tuple[str, str]]:
         ("Önbellekten girdi", f"%{cache_share * 100:.0f}" if cache_share is not None else "—"),
         ("Harness müdahalesi", str(interventions)),
         ("Tekrar okunan satır", reread_text(reading)),
+        *work_rows(work_stats(events)),
         (
             "Ortalama token/sn",
             f"{output_total / model_seconds:.2f}"

@@ -34,7 +34,7 @@ from harness.core.events import (
     TaskFinished,
     ToolFinished,
 )
-from harness.core.metrics import read_stats
+from harness.core.metrics import read_stats, work_stats
 from harness.core.permissions import PermissionManager
 from harness.core.session_log import SessionLogger
 from harness.llm.base import LLMClient
@@ -63,6 +63,9 @@ class TaskResult:
     interventions: int = 0  # harness katmanlarının araya girişi (HarnessIntervened)
     lines_read: int = 0  # read_file'ın gösterdiği satırlar (core/metrics.py)
     reread_lines: int = 0  # bunlardan daha önce okunmuş olanlar
+    first_edit_step: int | None = None  # ilk dosya düzenlemesinin model çağrısı (core/metrics.py)
+    after_last_edit: int | None = None  # son düzenlemeden sonraki model çağrısı (doğrulama kuyruğu)
+    peak_context: int | None = None  # tek çağrıdaki en büyük girdi tokenı
     variant: str = ""
     repeat: int = 1
     log: str | None = None  # bu koşunun oturum kaydı (.jsonl)
@@ -158,6 +161,7 @@ async def run_task(
 
         passed, detail = _grade(work, task_dir / "tests")
         reading = read_stats(seen)
+        work = work_stats(seen)
         return TaskResult(
             task_id=task_id,
             passed=passed,
@@ -173,6 +177,9 @@ async def run_task(
             interventions=interventions,
             lines_read=reading.lines_read,
             reread_lines=reading.reread_lines,
+            first_edit_step=work.first_edit_step,
+            after_last_edit=work.after_last_edit,
+            peak_context=work.peak_context,
             log=str(log.path) if log is not None else None,
         )
 
