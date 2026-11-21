@@ -70,10 +70,10 @@ def test_chat_preserves_history_and_hides_tool_details(
     assert len([e for e in events if isinstance(e, TaskStarted)]) == 2
     assert len([e for e in events if isinstance(e, TaskFinished)]) == 2
     assert len([e for e in events if isinstance(e, ToolFinished)]) == 1
-    reports = sorted((tmp_path / "harness-sessions").rglob("*.html"))
-    assert len(reports) == 2
-    assert any("Tur 2" in p.read_text(encoding="utf-8") for p in reports)
-    assert all("TOOL_RESULT_SECRET" in p.read_text(encoding="utf-8") for p in reports)
+    # Rapor tur sonunda değil /inspect ile üretilir ve oturum başına tek dosyadır.
+    (report,) = (tmp_path / "harness-sessions").rglob("*.html")
+    html = report.read_text(encoding="utf-8")
+    assert "Tur 2" in html and "TOOL_RESULT_SECRET" in html
 
 
 def test_eof_without_prompt_does_not_call_provider(

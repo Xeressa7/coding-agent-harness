@@ -1,10 +1,12 @@
 """Tam ekran terminal ön yüzü: sohbet, bağımsız akış, sabit editör ve seçim pencereleri."""
 
 import asyncio
+import json
 from collections.abc import Callable
 from contextlib import aclosing, suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import httpx
 from rich.text import Text
@@ -151,8 +153,34 @@ class ThoughtBlock(Collapsible):
         self._body.update(Text(self.source))
 
 
+def permission_text(arguments: str) -> str:
+    """Argümanı okunur kıl: JSON nesnesiyse "anahtar: değer", metinler gerçek satırlarıyla."""
+    try:
+        data: object = json.loads(arguments)
+    except ValueError:
+        return arguments
+    if not isinstance(data, dict):
+        return arguments
+    parts: list[str] = []
+    fields = cast(dict[str, object], data)
+    for key, value in fields.items():
+        shown = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        parts.append(f"{key}:\n{shown}" if "\n" in shown else f"{key}: {shown}")
+    return "\n".join(parts)
+
+
 class PermissionDialog(ModalScreen[PermissionChoice]):
-    """İzin katmanının "sor" dediği araç çağrısını gösterir; sonuç izin ver/reddet/oturum boyu."""
+    """İzin katmanının "sor" dediği araç çağrısını gösterir; sonuç izin ver/reddet/oturum boyu.
+
+    Uzun argüman kendi kutusunda kayar, düğmeler hep görünür kalır; klavye: Enter/e izin ver,
+    o oturum boyu, Esc/r reddet.
+    """
+
+    BINDINGS = [
+        Binding("e", "choose('allow')", "İzin ver"),
+        Binding("o", "choose('always')", "Oturum boyu"),
+        Binding("r", "choose('deny')", "Reddet"),
+    ]
 
     def __init__(self, call: ToolCall, summary: str = "") -> None:
         super().__init__()
@@ -165,11 +193,44 @@ class PermissionDialog(ModalScreen[PermissionChoice]):
         )
         with Vertical(id="permission-dialog"):
             yield Static(Text(title), id="permission-title")
-            yield Static(Text(self._call.arguments), id="permission-args")
             with Horizontal(id="permission-actions"):
-                yield Button("Reddet", id="deny")
-                yield Button("Oturum boyu izin ver", id="always")
-                yield Button("İzin ver", id="allow", variant="primary")
+                yield Button("Reddet (r)", id="deny")
+                yield Button("Oturum boyu izin ver (o)", id="always")
+                yield Button("İzin ver (e)", id="allow", variant="primary")
+            yield Static(
+                "Enter: odaktaki düğme · ↑↓ / PgUp PgDn: içeriği kaydır · Esc: reddet",
+                id="permission-keys",
+            )
+            with VerticalScroll(id="permission-scroll"):
+                yield Static(Text(permission_text(self._call.arguments)), id="permission-args")
+
+    def on_mount(self) -> None:
+        self.query_one("#allow", Button).focus()
+        self.call_after_refresh(self.fit_content)
+
+    def on_resize(self) -> None:
+        self.call_after_refresh(self.fit_content)
+
+    def fit_content(self) -> None:
+        """İçerik kutusu, pencere ekranın %90'ını aşmayacak kadar yükseklik alır."""
+        title = self.query_one("#permission-title", Static).outer_size.height
+        rest = sum(
+            self.query_one(f"#{name}").outer_size.height
+            for name in ("permission-actions", "permission-keys")
+        )
+        room = int(self.size.height * 0.9) - 2 - title - rest  # 2: pencere çerçevesi
+        self.query_one("#permission-scroll", VerticalScroll).styles.max_height = max(1, room)
+
+    def on_key(self, event: events.Key) -> None:
+        # Odak düğmedeyken de oklar içeriği kaydırır (PgUp/PgDn ve Esc uygulama bağlarından gelir).
+        scroll = self.query_one("#permission-scroll", VerticalScroll)
+        moves = {"up": scroll.scroll_up, "down": scroll.scroll_down}
+        if event.key in moves:
+            moves[event.key](animate=False)
+            event.stop()
+
+    def action_choose(self, choice: PermissionChoice) -> None:
+        self.dismiss(choice)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         match event.button.id:
@@ -307,32 +368,6 @@ class KeyScreen(ModalScreen[str | None]):
         self.dismiss(event.value.strip() or None)
 
 
-class QuestionScreen(ModalScreen[str | None]):
-    """Modelin `ask_user` sorusu: numarayla seçenek seçilir ya da cevap yazılır."""
-
-    def __init__(self, question: str, options: tuple[str, ...]) -> None:
-        super().__init__()
-        self.question = question
-        self.options = options
-
-    def compose(self) -> ComposeResult:
-        with Vertical(classes="dialog"):
-            yield Static(Text("Ajan soruyor"), classes="dialog-title")
-            yield Static(Text(self.question), classes="dialog-text")
-            for number, option in enumerate(self.options, 1):
-                yield Static(Text(f"{number}. {option}"), classes="dialog-text")
-            hint = "Numara ya da kendi cevabın" if self.options else "Cevabın"
-            yield Input(placeholder=hint, id="question-input")
-            yield Static("Enter gönder · boş Enter: cevap yok", classes="dialog-keys")
-
-    def on_mount(self) -> None:
-        self.query_one(Input).focus()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        self.dismiss(pick_answer(event.value, self.options))
-
-
 class HarnessApp(App[None]):
     TITLE = "Harness"
     CSS_PATH = "tui.tcss"
@@ -366,6 +401,8 @@ class HarnessApp(App[None]):
         self._active_question: str | None = None
         self._active_events: list[Event] = []
         self._suggesting = False  # durum satırı şu an komut önerisi gösteriyor
+        self._ask_options: tuple[str, ...] = ()  # bekleyen ask_user sorusunun seçenekleri
+        self._ask_answer: asyncio.Future[str | None] | None = None
         for palette in available().values():
             self.register_theme(textual_theme(palette))
         self.theme = f"harness-{session.theme}"
@@ -464,11 +501,61 @@ class HarnessApp(App[None]):
             case "latest":
                 self.action_latest()
             case "inspect":
-                self.action_inspect()
+                await self.action_inspect()
             case _:
                 pass
 
+    def answer_question(self, typed: str) -> None:
+        """Bekleyen ask_user sorusunu çözer: boş cevap yok, seçenek numarası o seçenek."""
+        future = self._ask_answer
+        if future is None or future.done():
+            return
+        self.query_one(ComposeInput).clear()
+        future.set_result(pick_answer(typed, self._ask_options))
+
+    async def ask_inline(self, question: str, options: tuple[str, ...]) -> str | None:
+        """Soru konuşmaya mesaj olarak düşer; cevap alt editörden gelir (ayrı pencere yok).
+
+        Soru beklenirken Enter/Gönder cevabı yollar, bilgi komutları çalışır, Esc turu
+        durdurur. Cevap soru mesajının altına işlenir; sohbet bütünsel kalır.
+        """
+        hint = (
+            "Numara ya da kendi cevabın · boş Enter: cevap yok"
+            if options
+            else "Cevabın · boş Enter: cevap yok"
+        )
+        body = question
+        if options:
+            body += "\n\n" + "\n".join(f"{i}. {option}" for i, option in enumerate(options, 1))
+        body += f"\n\n*{hint}*"
+        message = ChatMessage("Ajan soruyor", body, kind="agent")
+        await self.query_one("#conversation", VerticalScroll).mount(message)
+        answer_future: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
+        self._ask_options = options
+        self._ask_answer = answer_future
+        self.query_one("#send", Button).disabled = False  # Gönder düğmesi de cevabı yollar
+        self.query_one(ComposeInput).focus()
+        # Durum ancak cevap yolu hazırken "bekleniyor" der; önce yazılırsa erken Enter boşa gider.
+        self.set_status("Cevabın bekleniyor… · boş Enter: cevap yok")
+        try:
+            answer = await answer_future
+        finally:
+            self._ask_answer = None
+            self._ask_options = ()
+        suffix = f"\n\n**Cevap:** {answer}" if answer is not None else "\n\n*Cevap yok*"
+        await message.finish(body + suffix)
+        self.query_one("#send", Button).disabled = True  # iş bitene dek yine kapalı
+        return answer
+
     async def submit(self, text: str) -> None:
+        if self._ask_answer is not None:
+            typed = text.strip()
+            if is_command(typed):
+                # Soru beklerken de bilgi komutları çalışır; öbürleri busy korumasına takılır.
+                await self.run_command(typed)
+                return
+            self.answer_question(text)
+            return
         question = text.strip()
         if not question:
             return
@@ -520,7 +607,7 @@ class HarnessApp(App[None]):
             await self.action_quit()
             return
         if reply.inspect:
-            self.action_inspect()
+            await self.action_inspect()
             return
         await self.handle_reply(reply)
 
@@ -690,9 +777,8 @@ class HarnessApp(App[None]):
                                 self.agent.permissions.grant(call.name)
                             send = choice != "deny"
                         case QuestionAsked(question=question, options=options):
-                            self.set_status("Cevabın bekleniyor…")
                             await self.add_flow(f"? ajan soruyor · {question}")
-                            send = await self.push_screen_wait(QuestionScreen(question, options))
+                            send = await self.ask_inline(question, options)
                         case ToolStarted(call=call):
                             self.set_status(f"{call.name} çalışıyor…")
                             await self.add_flow(f"● {call.name}")
@@ -749,11 +835,8 @@ class HarnessApp(App[None]):
                         Text("Ajan · yanıt tamamlanmadı")
                     )
             if events_seen:
-                try:
-                    self.report = write_report(self.session_log.path)
-                    self.query_one("#inspect", Button).disabled = False
-                except (OSError, ValueError):
-                    await self.add_flow("! Rapor oluşturulamadı; JSONL kaydına bak.")
+                # Rapor burada üretilmez: büyük kayıtta saniyeler sürer; "İncele" deyince yazılır.
+                self.query_one("#inspect", Button).disabled = False
             self.busy = False
             self.query_one("#send", Button).disabled = self.failed
             self.query_one("#stop", Button).disabled = True
@@ -790,6 +873,9 @@ class HarnessApp(App[None]):
                 await self._turn.wait()
 
     async def action_stop(self) -> None:
+        if isinstance(self.screen, PermissionDialog):
+            self.screen.dismiss("deny")  # Esc izin penceresinde "reddet" demektir
+            return
         if isinstance(self.screen, (PickerScreen, KeyScreen, InfoScreen)):
             self.screen.dismiss(None)
             return
@@ -800,11 +886,7 @@ class HarnessApp(App[None]):
             if self.busy:
                 if self._active_question is not None:
                     self._record_cancelled_turn(self._active_question, self._active_events)
-                    try:
-                        self.report = write_report(self.session_log.path)
-                        self.query_one("#inspect", Button).disabled = False
-                    except (OSError, ValueError):
-                        await self.add_flow("! Rapor oluşturulamadı; JSONL kaydına bak.")
+                    self.query_one("#inspect", Button).disabled = False
                     self._active_question = None
                     self._active_events = []
                 self.busy = False
@@ -821,6 +903,8 @@ class HarnessApp(App[None]):
         self.query_one("#conversation", VerticalScroll).scroll_end(animate=False, immediate=True)
 
     def page_target(self) -> VerticalScroll:
+        if isinstance(self.screen, PermissionDialog):
+            return self.screen.query_one("#permission-scroll", VerticalScroll)
         flow = self.query_one("#flow", VerticalScroll)
         return (
             flow
@@ -837,11 +921,25 @@ class HarnessApp(App[None]):
     def action_toggle_theme(self) -> None:
         self.theme = f"harness-{self.session.cycle_theme()}"
 
-    def action_inspect(self) -> None:
-        if self.report is not None:
-            self.open_url(self.report.resolve().as_uri())
-        else:
+    async def build_report(self) -> Path | None:
+        """Kayıttan HTML incelemeyi o an üretir (arayüzü dondurmamak için ayrı iş parçacığında)."""
+        path = self.session_log.path
+        if not path.is_file() or path.stat().st_size == 0:
             self.set_status("Henüz inceleme raporu yok.")
+            return None
+        self.set_status("İnceleme hazırlanıyor…")
+        try:
+            self.report = await asyncio.to_thread(write_report, path)
+        except (OSError, ValueError):
+            await self.add_flow("! Rapor oluşturulamadı; JSONL kaydına bak.")
+            return None
+        self.set_status(f"İnceleme: {self.report}")
+        return self.report
+
+    async def action_inspect(self) -> None:
+        report = await self.build_report()
+        if report is not None:
+            self.open_url(report.resolve().as_uri())
 
 
 def run_tui(

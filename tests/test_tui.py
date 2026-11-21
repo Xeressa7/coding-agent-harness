@@ -11,6 +11,8 @@ from textual.events import MouseScrollDown
 from textual.widgets import Button, Input, OptionList, Static
 
 from harness.cli.commands import ChatSession
+from harness.cli.inspector import write_report
+from harness.cli.render import PermissionChoice
 from harness.cli.tui import (
     ChatMessage,
     ComposeInput,
@@ -19,7 +21,6 @@ from harness.cli.tui import (
     KeyScreen,
     PermissionDialog,
     PickerScreen,
-    QuestionScreen,
     ThoughtBlock,
 )
 from harness.core.anatomy import get_preset
@@ -128,7 +129,7 @@ async def test_initial_demo_task_runs_after_screen_mount(tmp_path: Path) -> None
         await pilot.pause()
         assert not app.busy and not app.failed
         assert [c.role for c in app.query(ChatMessage)] == ["Sen", "Ajan"]
-        assert len(model.received) == 1 and app.report is not None
+        assert len(model.received) == 1 and await app.build_report() is not None
 
 
 def dialog_open(app: HarnessApp) -> bool:
@@ -169,6 +170,48 @@ async def test_permission_dialog_session_grant_skips_the_second_question(tmp_pat
     assert kinds.count("permission_requested") == 1
 
 
+@pytest.mark.parametrize("size", [(120, 40), (80, 24), (60, 16)])
+async def test_permission_dialog_long_content_keeps_buttons_and_keys(
+    tmp_path: Path, size: tuple[int, int]
+) -> None:
+    body = "\n".join(f"satır {i}" for i in range(200))
+    arguments = json.dumps({"path": "uzun.md", "content": body}, ensure_ascii=False)
+    call = ToolCall(id="c1", name="write_file", arguments=arguments)
+    app = make_app(ScriptedLLM([]), tmp_path)
+    async with app.run_test(size=size) as pilot:
+        results: list[PermissionChoice | None] = []
+        app.push_screen(PermissionDialog(call, "uzun.md"), results.append)
+        await pilot.pause()
+        await pilot.pause()  # yükseklik ayarı bir kare sonra uygulanır
+        dialog = app.screen
+        allow = dialog.query_one("#allow", Button)
+        deny = dialog.query_one("#deny", Button)
+        for button in (allow, deny, dialog.query_one("#always", Button)):
+            assert button.region.height > 0 and button.region.bottom <= size[1]
+        assert app.focused is allow
+        # Metin kaçışsız, gerçek satırlarla görünür.
+        shown = str(dialog.query_one("#permission-args", Static).render())
+        assert "satır 1\nsatır 2" in shown and "\\n" not in shown
+        scroll = dialog.query_one("#permission-scroll", VerticalScroll)
+        assert scroll.region.bottom <= size[1]
+        await pilot.press("pagedown")
+        await pilot.pause()
+        assert scroll.scroll_y > 0
+        await pilot.press("enter")
+        await pilot.pause()
+        assert results == ["allow"] and not dialog_open(app)
+
+        app.push_screen(PermissionDialog(call), results.append)
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        app.push_screen(PermissionDialog(call), results.append)
+        await pilot.pause()
+        await pilot.press("o")
+        await pilot.pause()
+        assert results == ["allow", "deny", "always"]
+
+
 async def test_enter_send_shift_enter_multiline_and_history(tmp_path: Path) -> None:
     model = ScriptedLLM(
         [AssistantMessage(text="Birinci yanıt"), AssistantMessage(text="İkinci yanıt")]
@@ -199,7 +242,8 @@ async def test_enter_send_shift_enter_multiline_and_history(tmp_path: Path) -> N
         assert any(
             isinstance(m, AssistantMessage) and m.text == "Birinci yanıt" for m in model.received[1]
         )
-        assert app.report is not None and app.report.is_file()
+        report = await app.build_report()
+        assert report is not None and report.is_file()
 
 
 async def test_second_turn_is_registered_before_slow_message_mount(
@@ -277,7 +321,7 @@ async def test_escape_cancels_without_allowing_broken_history_to_continue(tmp_pa
         assert model.calls == 1
         events = read_session(app.session_log.path)
         assert isinstance(events[-1], TaskFinished) and events[-1].reason == "cancelled"
-        assert app.report is not None
+        assert await app.build_report() is not None
 
 
 async def test_new_command_recovers_a_cancelled_session(tmp_path: Path) -> None:
@@ -327,8 +371,9 @@ async def test_tool_details_only_in_report_not_chat_or_flow(tmp_path: Path) -> N
         assert "PRIVATE_PATH" not in shown and "PRIVATE_TOOL_RESULT" not in shown
         # Yol yok ama ne olduğu var: araç ve sonucun özeti.
         assert "✓ read_file · 1 satır" in shown
-        assert app.report is not None
-        html = app.report.read_text(encoding="utf-8")
+        report = await app.build_report()
+        assert report is not None
+        html = report.read_text(encoding="utf-8")
         assert "PRIVATE_PATH" in html and "PRIVATE_TOOL_RESULT" in html
 
 
@@ -483,8 +528,7 @@ async def test_cancel_during_delta_render_records_cancelled_completion(
     events = read_session(app.session_log.path)
     assert isinstance(events[-1], TaskFinished)
     assert events[-1].reason == "cancelled"
-    assert app.report is not None
-    assert "Durduruldu" in app.report.read_text(encoding="utf-8")
+    assert "Durduruldu" in write_report(app.session_log.path).read_text(encoding="utf-8")
 
 
 async def test_quit_waits_for_cancellation_and_preserves_log(tmp_path: Path) -> None:
@@ -508,7 +552,7 @@ async def test_model_failure_is_visible_and_does_not_leave_send_enabled(tmp_path
         await pilot.pause()
         assert app.failed and not app.busy
         assert app.query_one("#send", Button).disabled
-        assert app.report is not None
+        assert await app.build_report() is not None
         events = read_session(app.session_log.path)
         assert isinstance(events[-1], TaskFinished) and events[-1].reason == "error"
         await app.submit("tekrar")
@@ -661,7 +705,9 @@ async def test_slash_opens_palette_suggests_and_tab_completes(tmp_path: Path) ->
         assert any("açık" in n.message for n in app._notifications)  # type: ignore[attr-defined]
 
 
-async def test_question_screen_answers_ask_user_with_an_option_number(tmp_path: Path) -> None:
+async def test_ask_user_question_joins_the_chat_and_is_answered_from_the_editor(
+    tmp_path: Path,
+) -> None:
     arguments = json.dumps({"question": "Sayaç gizlensin mi?", "options": ["evet", "hayır"]})
     model = ScriptedLLM(
         [
@@ -672,18 +718,53 @@ async def test_question_screen_answers_ask_user_with_an_option_number(tmp_path: 
     app = make_app(model, tmp_path, "files+ask_user")
     async with app.run_test(size=(100, 30)) as pilot:
         await app.submit("sayacı düzelt")
+        status = app.query_one("#status", Static)
         for _ in range(50):
             await pilot.pause()
-            if isinstance(app.screen, QuestionScreen):
+            if "Cevabın bekleniyor" in str(status.render()):
                 break
-        screen = app.screen
-        assert isinstance(screen, QuestionScreen) and screen.options == ("evet", "hayır")
-        screen.query_one(Input).value = "1"
-        await screen.query_one(Input).action_submit()
+        assert "Cevabın bekleniyor" in str(status.render())
+        # Soru sohbetin bir parçası olarak düştü; ayrı pencere açılmadı.
+        [question] = [m for m in app.query(ChatMessage) if "Sayaç gizlensin mi?" in m.source]
+        editor = app.query_one(ComposeInput)
+        editor.text = "1"
+        await pilot.press("enter")
         for _ in range(100):
             await pilot.pause()
             if not app.busy:
                 break
         assert not app.busy and not app.failed
+        assert "**Cevap:** evet" in question.source  # cevap sorunun altına işlendi
     finished = [e for e in read_session(app.session_log.path) if e.kind == "tool_finished"]
     assert finished[0].result.content == "Kullanıcının cevabı: evet"  # pyright: ignore[reportAttributeAccessIssue]
+
+
+async def test_blank_enter_answers_the_ask_user_question_with_no_answer(tmp_path: Path) -> None:
+    arguments = json.dumps({"question": "Hangi biçim?", "options": ["csv", "json"]})
+    model = ScriptedLLM(
+        [
+            AssistantMessage(tool_calls=(ToolCall(id="q1", name="ask_user", arguments=arguments),)),
+            AssistantMessage(text="Varsayım: csv."),
+        ]
+    )
+    app = make_app(model, tmp_path, "files+ask_user")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await app.submit("veriyi yaz")
+        status = app.query_one("#status", Static)
+        for _ in range(50):
+            await pilot.pause()
+            if "Cevabın bekleniyor" in str(status.render()):
+                break
+        app.query_one(ComposeInput).text = ""
+        await pilot.press("enter")  # boş: cevap yok, ajan varsayımla sürer
+        for _ in range(100):
+            await pilot.pause()
+            if not app.busy:
+                break
+        assert not app.busy and not app.failed
+        [question] = [m for m in app.query(ChatMessage) if "Hangi biçim?" in m.source]
+        assert "Cevap yok" in question.source
+    finished = [e for e in read_session(app.session_log.path) if e.kind == "tool_finished"]
+    assert finished[0].result.content.startswith(  # pyright: ignore[reportAttributeAccessIssue]
+        "Kullanıcıya şu an soru sorulamıyor"
+    )

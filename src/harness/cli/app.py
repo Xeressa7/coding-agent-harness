@@ -424,9 +424,17 @@ class TurnOutcome:
 
 
 async def run_turn(
-    agent: Agent, question: str, log: SessionLogger, *, quiet: bool = False
+    agent: Agent,
+    question: str,
+    log: SessionLogger,
+    *,
+    quiet: bool = False,
+    with_report: bool = True,
 ) -> TurnOutcome:
-    """Bir turu çalıştırır, olayları kaydeder. Sade akışta konuşma, -p'de yalnız cevap yazar."""
+    """Bir turu çalıştırır, olayları kaydeder. Sade akışta konuşma, -p'de yalnız cevap yazar.
+
+    `with_report=False`: HTML inceleme tur sonunda üretilmez (sohbette `/inspect` üretir).
+    """
     events: list[Event] = []
     report: Path | None = None
     streamed_text = ""
@@ -530,7 +538,7 @@ async def run_turn(
             console.print()
             console.print("[yellow]Yanıt tamamlanmadı.[/]")
         if events:
-            report = _after_turn(events, log, quiet)
+            report = _after_turn(events, log, quiet, with_report)
     return TurnOutcome(finish, report)
 
 
@@ -571,12 +579,16 @@ def _permission(agent: Agent, event: PermissionRequested, *, interactive: bool) 
     return choice != "deny"
 
 
-def _after_turn(events: list[Event], log: SessionLogger, quiet: bool) -> Path | None:
+def _after_turn(
+    events: list[Event], log: SessionLogger, quiet: bool, with_report: bool = True
+) -> Path | None:
     if not quiet:
         items = summary_items(events)
         console.print(Text(" · ".join(f"{label}: {value}" for label, value in items)))
         if any(isinstance(e, TaskFinished) and e.reason == "step_limit" for e in events):
             console.print(Text(STEP_LIMIT_HINT, style="h.warn"))
+    if not with_report:
+        return None
     try:
         report = write_report(log.path)
     except (OSError, ValueError) as exc:
@@ -642,7 +654,7 @@ def run_chat(
 
 
 async def plain_loop(session: ChatSession) -> None:
-    report: Path | None = None
+    has_turns = False  # rapor ancak bir tur kaydedildiyse üretilebilir
     while True:
         try:
             console.rule("[h.user]Sen", align="left")
@@ -656,6 +668,7 @@ async def plain_loop(session: ChatSession) -> None:
             if reply.exit:
                 break
             if reply.inspect:
+                report = _inspect_now(session.log) if has_turns else None
                 if report:
                     typer.launch(report.resolve().as_uri())
                 else:
@@ -663,12 +676,21 @@ async def plain_loop(session: ChatSession) -> None:
             step: CommandReply | None = reply
             while step is not None:  # liste seçimi bir sonrakini açabilir (model → effort)
                 if step.reset:
-                    report = None
+                    has_turns = False
                 show_reply(step)
                 step = await next_step(session, step)
             continue
         console.print()
-        report = (await run_turn(session.agent, question, session.log)).report
+        await run_turn(session.agent, question, session.log, with_report=False)
+        has_turns = True  # rapor /inspect deyince üretilir
+
+
+def _inspect_now(log: SessionLogger) -> Path | None:
+    try:
+        return write_report(log.path)
+    except (OSError, ValueError) as exc:
+        errors.print(Text(f"Rapor oluşturulamadı: {exc}", style="h.warn"))
+        return None
 
 
 async def next_step(session: ChatSession, reply: CommandReply) -> CommandReply | None:

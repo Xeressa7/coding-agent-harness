@@ -27,13 +27,19 @@ class TaskStarted(_Event):
 class ContextAssembled(_Event):
     """Bu adımda modele giden her şeyin birebir kopyası: mesajlar ve sunulan araç şemaları.
 
-    "Model neyi gördü?" sorusunun cevabıdır; kayıt büyür ama tahmin değil, gerçektir.
+    "Model neyi gördü?" sorusunun cevabıdır; tahmin değil, gerçektir.
+
+    Kayıt dosyasında tekrar yazılmaz: `reused` > 0 ise önceki bağlamın ilk `reused` mesajı
+    aynen geçerlidir ve `messages` yalnız sonrasını taşır; `tools_reused` araç şemaları için
+    aynısını söyler. `read_session` bunları açar; bellekteki olay hep tam kopyadır (0/False).
     """
 
     kind: Literal["context_assembled"] = "context_assembled"
     step: int
     messages: tuple[Message, ...]
     tools: tuple[ToolSpec, ...] = ()
+    reused: int = 0
+    tools_reused: bool = False
 
 
 class ModelStarted(_Event):

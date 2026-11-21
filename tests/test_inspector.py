@@ -140,3 +140,27 @@ def test_context_shows_what_was_sent_and_its_size_per_role() -> None:
     assert "Modele giden bağlam · adım 1 · 2 mesaj · 1 araç" in html
     assert "system" in html and "talimat" in html and "görevim" in html
     assert "7 karakter" in html  # "talimat" ve "görevim" ayrı ayrı 7 karakter
+
+
+def test_auto_report_overwrites_its_own_previous_report(tmp_path: Path) -> None:
+    log = SessionLogger(tmp_path / "oturum.jsonl")
+    log.write(TaskStarted(task="ilk tur"))
+    first = write_report(log.path)
+    log.write(TaskStarted(task="ikinci tur"))
+    second = write_report(log.path)
+    assert second == first == log.path.with_suffix(".html")
+    assert "ikinci tur" in second.read_text(encoding="utf-8")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["oturum.html", "oturum.jsonl"]
+
+
+def test_report_prints_repeated_context_only_once() -> None:
+    first = (SystemMessage(text="UZUN_TALIMAT"), UserMessage(text="görev"))
+    events = [
+        TaskStarted(task="görev"),
+        ContextAssembled(step=1, messages=first),
+        ContextAssembled(step=2, messages=(*first, UserMessage(text="YENI_MESAJ"))),
+    ]
+    html = render_report(events, "oturum.jsonl")
+    assert html.count("UZUN_TALIMAT") == 1
+    assert "İlk 2 mesaj adım 1 bağlamındakiyle birebir aynı" in html
+    assert "YENI_MESAJ" in html and "adım 2 · 3 mesaj" in html

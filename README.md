@@ -170,7 +170,10 @@ kaydırılır; yukarı okurken yeni metin görünümü aşağı çekmez. **En al
 veya Ctrl+End son yanıta döner. Sağ akış paneli ayrıca kaydırılabilir.
 
 Enter ya da Gönder mesajı yollar; Shift+Enter yeni satır ekler (Ctrl+Enter da gönderir).
-Model çalışırken yeni taslak yazılabilir ama ikinci görev başlatılmaz. Esc/Durdur
+Model çalışırken yeni taslak yazılabilir ama ikinci görev başlatılmaz. Model `ask_user`
+ile soru sorduğunda soru konuşmaya bir mesaj olarak düşer; cevap alt editörden yazılır
+(Enter ya da Gönder cevabı yollar, boş Enter cevap yok demektir; soru beklerken de bilgi
+komutları çalışır). Esc/Durdur
 turu iptal eder; Ctrl+Q veya `/exit` kaydı koruyarak çıkar. Ctrl+T açık/koyu temayı
 değiştirir. Rapor veya `/inspect` son incelemeyi açar. Kısmi/başarısız geçmişle
 devam edilmez: hata veya kesinti sonrası yeni sohbet açmak gerekir. Bu klavye ve

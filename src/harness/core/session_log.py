@@ -16,7 +16,14 @@ from typing import cast
 
 from pydantic import TypeAdapter
 
-from harness.core.events import Event, HarnessIntervened, ModelReplied, TaskStarted, ToolFinished
+from harness.core.events import (
+    ContextAssembled,
+    Event,
+    HarnessIntervened,
+    ModelReplied,
+    TaskStarted,
+    ToolFinished,
+)
 from harness.core.finish_check import note as finish_note
 from harness.messages import AssistantMessage, Message, UserMessage
 
@@ -24,22 +31,78 @@ _EVENT = TypeAdapter[Event](Event)
 
 
 class SessionLogger:
-    """Olayları bir JSONL dosyasına, geldikçe ekler."""
+    """Olayları bir JSONL dosyasına, geldikçe ekler.
+
+    Bağlam olayı her adımda konuşmanın tamamını taşır; dosyaya yalnız bir önceki bağlamdan
+    farklı kısmı yazılır (bkz. `ContextAssembled`). Okuyan `read_session` birebir geri kurar.
+    """
 
     def __init__(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
+        self._context: ContextAssembled | None = None  # bu kaydedicinin yazdığı son bağlam
 
     def write(self, event: Event) -> None:
+        stored = event
+        if isinstance(event, ContextAssembled):
+            stored = compact_context(event, self._context)
+            self._context = event
         # Her olay ayrı açılıp eklenir: oturum yarıda kesilse de o ana kadarki kayıt diskte kalır.
         with self.path.open("a", encoding="utf-8") as f:
-            f.write(_EVENT.dump_json(event).decode() + "\n")
+            f.write(_EVENT.dump_json(stored).decode() + "\n")
+
+
+def compact_context(event: ContextAssembled, previous: ContextAssembled | None) -> ContextAssembled:
+    """Öncekiyle ortak baştaki mesajları ve aynı araç şemalarını atar; kayıt için."""
+    if previous is None:
+        return event
+    reused = 0
+    for old, new in zip(previous.messages, event.messages, strict=False):
+        if old is not new and old != new:
+            break
+        reused += 1
+    tools_reused = bool(event.tools) and event.tools == previous.tools
+    if not reused and not tools_reused:
+        return event
+    return event.model_copy(
+        update={
+            "messages": event.messages[reused:],
+            "reused": reused,
+            "tools": () if tools_reused else event.tools,
+            "tools_reused": tools_reused,
+        }
+    )
+
+
+def expand_context(event: ContextAssembled, previous: ContextAssembled | None) -> ContextAssembled:
+    """`compact_context`'in tersi: kayıttaki kısaltılmış bağlamı tam kopyaya çevirir."""
+    if not event.reused and not event.tools_reused:
+        return event
+    if previous is None or event.reused > len(previous.messages):
+        raise ValueError(f"Adım {event.step}: bağlam önceki bağlama dayanıyor ama o kayıtta yok.")
+    return event.model_copy(
+        update={
+            "messages": previous.messages[: event.reused] + event.messages,
+            "reused": 0,
+            "tools": previous.tools if event.tools_reused else event.tools,
+            "tools_reused": False,
+        }
+    )
 
 
 def read_session(path: Path) -> list[Event]:
-    """Kaydı geri okur; her satır doğru olay sınıfına oturur."""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return [_EVENT.validate_json(line) for line in lines if line.strip()]
+    """Kaydı geri okur; her satır doğru olay sınıfına oturur, bağlamlar tam hâline açılır."""
+    events: list[Event] = []
+    context: ContextAssembled | None = None
+    with path.open(encoding="utf-8") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            event = _EVENT.validate_json(line)
+            if isinstance(event, ContextAssembled):
+                event = context = expand_context(event, context)
+            events.append(event)
+    return events
 
 
 def history_from_events(events: Sequence[Event]) -> list[Message]:
