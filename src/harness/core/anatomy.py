@@ -57,7 +57,10 @@ _TOOL_FACTORIES: dict[ToolName, Callable[[Path, "Anatomy", LocalEnvironment], To
     "delete_file": lambda root, a, env: DeleteFile(root=root),
     "update_plan": lambda root, a, env: UpdatePlan(),
     "bash": lambda root, a, env: Bash(
-        env, root=root if a.persistent_cwd else None, guidance=a.tool_guidance
+        env,
+        root=root if a.persistent_cwd else None,
+        guidance=a.tool_guidance,
+        timeout_hint=a.timeout_hint,
     ),
     "job_output": lambda root, a, env: JobOutput(env.jobs),
     "job_stop": lambda root, a, env: JobStop(env.jobs),
@@ -99,6 +102,12 @@ class Anatomy(BaseModel):
     # Araç arayüzü yönlendirmesi (G03): read_file sekmeli önek, edit_file sonucu bölgeyi gösterir,
     # bash okuma için dosya araçlarını önerir, talimat bağımsız çağrıları birlikte istemeyi söyler.
     tool_guidance: bool = False
+    # bash zaman aşımında sonuç daha dar test ve arka plan işi önerir (pilot madde 5); tam takımı
+    # koşmaktan caydırmaz.
+    timeout_hint: bool = False
+    # talimata: kurulu ortamı yeniden kurma, görev dışı cila yapma (pilot madde 4). Ölçülmeden
+    # varsayılana girmez: depo talimatıyla çatışabilir.
+    scope_focus: bool = False
 
     def tool_registry(self, root: Path) -> ToolRegistry:
         """Açık araçları, çalışma dizinine bağlı olarak kurar."""
@@ -123,7 +132,9 @@ PRESETS: dict[str, Anatomy] = {
         ask_user=True,
     ),
 }
-DEFAULT_PRESET = "bash"  # standart harness: komut çalıştırır, her çağrıda izin sorar
+# Ürün varsayılanı: `bash` + araç arayüzü yönlendirmesi (G03, 2026-11-23). `bash` hazır ayarı
+# bilerek değiştirilmez: deneylerin tabanıdır (A0) ve eski kayıtlardaki "bash" aynı anlamı taşır.
+DEFAULT_PRESET = "bash+tool_guidance"
 
 # Preset'in üstüne `+ad` ile açılıp `-ad` ile kapatılan katmanlar: `bash+loop_guard`.
 # Varsayılanı açık olan katman (output_limit; bash/full'da persistent_cwd) `-ad` ile kapatılır.
@@ -140,6 +151,9 @@ LAYERS: dict[str, str] = {
     "finish_check": "bitirirken: düzenlemeden sonra komut yoksa ya da plan yarımsa bir kez sorar",
     "tool_guidance": "araç arayüzü: sekmeli satır öneki, düzenleme sonucu bölge, okuma için "
     "dosya araçları, bağımsız çağrılar birlikte",
+    "timeout_hint": "bash zaman aşımında daha dar test ve arka plan işi önerir; tam takım "
+    "yine koşulur",
+    "scope_focus": "talimata ekler: kurulu ortamı yeniden kurma, isteğin dışında cila yapma",
 }
 
 

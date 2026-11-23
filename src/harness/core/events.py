@@ -23,6 +23,10 @@ class TaskStarted(_Event):
     effort: str | None = None
     anatomy: Anatomy | None = None  # None: anatomi kaydı öncesinden kalma oturum
     root: str | None = None  # ajanın çalıştığı klasör (harita ağacı); eski kayıtta None
+    # Harness'ın modele kendi verdiği her şeyin özeti: talimat (AGENTS.md eklenmeden) + araç
+    # şemaları, sha256'nın ilk 16 hanesi. Aynı parmak izi = aynı harness ayarı; adlar ve
+    # sürümler değişse de kayıtlar arası aynılık buradan doğrulanır. Eski kayıtta None.
+    fingerprint: str | None = None
 
 
 class ContextAssembled(_Event):

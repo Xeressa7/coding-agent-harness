@@ -253,6 +253,7 @@ def load_system_prompt(anatomy: Anatomy) -> str:
         _PROMPT_FILES[anatomy.prompt],
         *(["narrow_scope.md"] if anatomy.narrow_scope else []),
         *(["tool_guidance.md"] if anatomy.tool_guidance else []),
+        *(["scope_focus.md"] if anatomy.scope_focus else []),
     ]
     texts = [(_PROMPT_DIR / name).read_text(encoding="utf-8") for name in files]
     return "\n\n".join(re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip() for text in texts)

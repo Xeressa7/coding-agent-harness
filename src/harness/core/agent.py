@@ -12,6 +12,8 @@ ve cevabı kendisi sormadan, `asend` ile geri gelecek şekilde bekler; cevapsız
 """
 
 import asyncio
+import hashlib
+import json
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing
 from datetime import UTC, datetime
@@ -120,6 +122,7 @@ class Agent:
             else None
         )
         self.history: list[Message] = [SystemMessage(text=system_prompt), *history]
+        self.fingerprint = harness_fingerprint(system_prompt, tools)
         self._checkpoints = checkpoints
         # Bir sonraki görevin başına eklenecek harness notları (ör. "kullanıcı geri aldı").
         # Görev metnine girer: kayıtta görünür, oturuma devam edilince de geçmişte kalır.
@@ -220,6 +223,7 @@ class Agent:
             effort=self._effort,
             anatomy=self._anatomy,
             root=str(self._root) if self._root else None,
+            fingerprint=self.fingerprint,
             timestamp=datetime.now(UTC),
         )
         if self._checkpoints is not None and self._checkpoints.broken is None:
@@ -503,3 +507,14 @@ class Agent:
             duration_seconds=perf_counter() - started,
             timestamp=datetime.now(UTC),
         )
+
+
+def harness_fingerprint(system_prompt: str, tools: ToolRegistry) -> str:
+    """Talimat + araç şemalarının özeti (sha256, ilk 16 hane). Proje bağlamı (AGENTS.md, hafıza)
+    sonradan eklendiği için girmez: parmak izi depodan bağımsız, yalnız harness ayarını söyler."""
+    blob = json.dumps(
+        {"system": system_prompt, "tools": [spec.model_dump() for spec in tools.specs()]},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]

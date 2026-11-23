@@ -7,6 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from harness.cli import app as cli
+from harness.core.anatomy import DEFAULT_PRESET
 from harness.core.config import Settings, load_settings, save_settings
 from harness.llm.base import Effort, ModelInfo
 from harness.llm.providers import Provider
@@ -118,7 +119,7 @@ def test_model_flag_can_name_the_provider_for_one_run(saved: Path) -> None:
         "chatgpt",
         "gpt-6-sol",
         "high",
-        "bash",
+        DEFAULT_PRESET,  # ayarda anatomi yok: ürün varsayılanı (bash+tool_guidance)
     )
     assert cli.resolve_config("gpt-6-sol", None, None).effort == "high"
     assert cli.resolve_config("gpt-6-luna", None, None).effort is None

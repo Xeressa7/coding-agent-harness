@@ -35,6 +35,11 @@ class BashParams(BaseModel):
 
 
 BACKGROUND_FIRST_SECONDS = 3.0  # arka plan işinin ilk çıktısı için beklenen süre
+TIMEOUT_HINT = (
+    "\n[harness] Uzun süren test takımı için: önce değiştirdiğin kodun testlerini ayrı çalıştır; "
+    "tam takımı da çalıştır ama background: true ile başlatıp job_output ile izle ya da "
+    "timeout_seconds'ı artır (en çok 600). Aynı komutu aynı sınırla yineleme."
+)
 
 
 class Bash(Tool[BashParams]):
@@ -47,12 +52,21 @@ class Bash(Tool[BashParams]):
     category = "exec"
 
     def __init__(
-        self, environment: Environment, *, root: Path | None = None, guidance: bool = False
+        self,
+        environment: Environment,
+        *,
+        root: Path | None = None,
+        guidance: bool = False,
+        timeout_hint: bool = False,
     ) -> None:
         """root verilirse `cd` komutlar arasında korunur (kalıcı çalışma klasörü).
 
         guidance (`tool_guidance` katmanı): açıklama okuma ve arama için dosya araçlarını
-        önerir; pilotta model dosyaları bash'te cat/sed ile parça parça okuyordu."""
+        önerir; pilotta model dosyaları bash'te cat/sed ile parça parça okuyordu.
+
+        timeout_hint (`timeout_hint` katmanı): zaman aşımı sonucu daha dar bir test ya da arka
+        plan işi önerir; pilotta tam takım 600 sn'de kesildi ve model aynı komutu yineledi."""
+        self._timeout_hint = timeout_hint
         self._environment = environment
         self._root = root.resolve() if root is not None else None
         self._cwd = PurePosixPath()  # köke göre; "." kökün kendisi
@@ -91,8 +105,11 @@ class Bash(Tool[BashParams]):
         if self._root is not None:
             result, note = self._follow(result)
         if result.timed_out:
+            hint = TIMEOUT_HINT if self._timeout_hint else ""
             raise ToolError(
-                f"Komut {params.timeout_seconds} sn içinde bitmedi, durduruldu.\n" + _format(result)
+                f"Komut {params.timeout_seconds} sn içinde bitmedi, durduruldu.\n"
+                + _format(result)
+                + hint
             )
         out, err = count_lines(result.stdout), count_lines(result.stderr)
         output = f"{out} satır çıktı" + (f", {err} satır hata çıktısı" if err else "")

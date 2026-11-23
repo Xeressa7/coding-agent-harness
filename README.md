@@ -130,7 +130,10 @@ aboneliği ister. `/model` listesi ve `harness models opencode-go` her modelin b
 | `bash` | 2 | `files` + `bash` |
 | `full` | 3 | `bash` + `fetch_url` |
 
-Varsayılan `bash`'tir (standart harness: komut çalıştırır, her çağrıda izin sorar).
+Varsayılan `bash+tool_guidance`'tır: `bash` paketi + araç arayüzü yönlendirmesi (komut
+çalıştırır, her çağrıda izin sorar). `bash` paketinin kendisi değiştirilmez; deneylerin
+tabanıdır. Her koşu `TaskStarted.fingerprint`'e talimat ve araç şemalarının özetini yazar:
+aynı parmak izi = modele aynı harness ayarı gitti.
 `read_file` bir seferde en çok 2.000 satır / ~30.000 karakter verir ve devamın
 `start_line`'ını söyler.
 
@@ -143,6 +146,9 @@ sohbette `/anatomy` listesinde tek tıkla):
 | `output_limit` (açık) | 40.000 karakteri aşan araç çıktısının ortasını keser; modele söyler, tam çıktı kayıtta kalır (`-output_limit` kapatır) |
 | `agents_md` (açık) | Projedeki `AGENTS.md`'yi (yoksa `CLAUDE.md`, `@dosya` satırları izlenir) sistem talimatına ekler. `ctx init`'in yazdığı hafıza bölümü (harita bloğunu taşıyan başlık) bu katmana girmez; o bölüm `memory` katmanına aittir |
 | `memory` | agent-context hafızası (`ctx`): görev başında ctx'in kendi kancası haritayı ve kullanım kurallarını talimata ekler, dosya okunup yazılınca o dosyayı anan notlar sonuca eklenir. Kapalıyken modele hafızadan hiç söz edilmez. `ctx` ya da `context.yaml` yoksa çalışmadığını söyler |
+| `tool_guidance` (varsayılanda açık) | Araç arayüzü: `read_file` satır öneki numara + sekme, `edit_file` sonucu düzenlenen bölgeyi gösterir, bash açıklaması okuma için dosya araçlarını önerir, talimat bağımsız çağrıları birlikte istemeyi söyler |
+| `timeout_hint` | bash zaman aşımında daha dar testi ve arka plan işini önerir; tam takımı koşmaktan caydırmaz |
+| `scope_focus` | Talimata ekler: kurulu ortamı yeniden kurma, isteğin dışında biçim/tip/lint cilası yapma. Depo talimatıyla çatışabilir, ölçülmeden açılmaz |
 
 Her araya giriş `HarnessIntervened` olayı olarak kayda geçer; `/usage`, inceleme
 sayfası, canlı panel ve `harness eval` "harness kaç kez müdahale etti" sorusunu
