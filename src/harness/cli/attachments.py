@@ -6,9 +6,11 @@ adından değil ilk baytlardan anlaşılır (uzantısı yanlış dosya da doğru
 """
 
 import hashlib
+import os
 import shlex
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from harness.core.config import HARNESS_HOME
 from harness.messages import ImageAttachment
@@ -69,6 +71,15 @@ def from_file(path: Path, folder: Path | None = None) -> ImageAttachment:
     return store(data, path.name, folder)
 
 
+def split_pasted_paths(text: str, *, windows: bool) -> list[str]:
+    """Yapıştırılan metni yollara böler. POSIX kipi `\\` işaretini kaçış sayar; Windows
+    yolları (`C:\\Users\\…`) bozulmasın diye Windows'ta tırnaklar elle soyulur."""
+    if not windows:
+        return shlex.split(text)
+    parts = shlex.split(text, posix=False)
+    return [p[1:-1] if len(p) >= 2 and p[0] == p[-1] and p[0] in "\"'" else p for p in parts]
+
+
 def dropped_paths(text: str) -> list[Path] | None:
     """Terminale sürüklenen dosyalar yol olarak yapıştırılır ('…' tırnaklı, file:// ya da
     kaçışlı boşluklu). Yapıştırılanın tamamı var olan görsel dosyalarıysa onların yolları;
@@ -77,13 +88,14 @@ def dropped_paths(text: str) -> list[Path] | None:
     if not text:
         return None
     try:
-        parts = shlex.split(text)
+        parts = split_pasted_paths(text, windows=os.name == "nt")
     except ValueError:
         return None
     paths: list[Path] = []
     for part in parts:
-        if part.startswith("file://"):
-            part = unquote(urlparse(part).path)
+        if part.startswith("file:"):
+            # url2pathname yüzde kaçışlarını çözer; Windows'ta /C:/… → C:\…
+            part = url2pathname(urlparse(part).path)
         path = Path(part).expanduser()
         if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
             return None

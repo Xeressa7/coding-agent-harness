@@ -1,6 +1,7 @@
 """Görsel ekleri: depo, sürükle-bırak yolları, adaptör biçimleri ve kayıttan geri yükleme."""
 
 import base64
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from harness.cli.attachments import (
     dropped_paths,
     from_file,
     sniff,
+    split_pasted_paths,
     store,
 )
 from harness.core.events import TaskStarted
@@ -55,9 +57,21 @@ def test_dropped_paths_accept_quoted_uri_and_escaped_forms(tmp_path: Path) -> No
     other = tmp_path / "b.jpg"
     other.write_bytes(JPEG)
     assert dropped_paths(f"'{spaced}'") == [spaced]
-    assert dropped_paths(f"file://{str(spaced).replace(' ', '%20')}") == [spaced]
-    escaped = str(spaced).replace(" ", "\\ ")
-    assert dropped_paths(f"{escaped} {other}\n") == [spaced, other]
+    assert dropped_paths(f'"{spaced}" {other}') == [spaced, other]
+    assert dropped_paths(spaced.as_uri()) == [spaced]  # file:///…/ekran%20g%C3%B6r…
+    if os.name != "nt":  # kaçışlı boşluk yalnız POSIX kabuklarında
+        escaped = str(spaced).replace(" ", "\\ ")
+        assert dropped_paths(f"{escaped} {other}\n") == [spaced, other]
+
+
+def test_windows_split_keeps_backslashes() -> None:
+    text = r'"C:\Users\kullanici\ekran görüntüsü.png" C:\tmp\b.jpg'
+    assert split_pasted_paths(text, windows=True) == [
+        r"C:\Users\kullanici\ekran görüntüsü.png",
+        r"C:\tmp\b.jpg",
+    ]
+    # POSIX kipi aynı metindeki ters bölüleri yutar: Windows'ta kırılan buydu.
+    assert split_pasted_paths(r"C:\tmp\b.jpg", windows=False) == ["C:tmpb.jpg"]
 
 
 def test_dropped_paths_leave_ordinary_text_alone(tmp_path: Path) -> None:
