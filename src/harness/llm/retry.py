@@ -11,10 +11,16 @@ sürdü). Kurallar:
 - Bekleme üstel artar (2, 4, 8 ... en çok 60 sn); sunucu Retry-After verdiyse ona uyulur
   (en çok 120 sn). Toplam bekleme ~5 dakikayı aşınca son hata yükselir.
 
-Her bekleme `waits` listesine yazılır; ajan bunu kayda geçirebilir (ölçüm: kaç kez beklendi).
+Her bekleme `waits` listesine yazılır. `HARNESS_RETRY_LOG` ortam değişkeni bir dosya yolu verirse
+her bekleme oraya da bir JSON satırı olarak eklenir (deney koşucusu 429 süresini böyle ölçer; G03 /
+5. tur ön kaydı: bekleme ajan süresinin %20'sini aşan koşu geçersiz). Değişken yoksa hiçbir şey
+yazılmaz.
 """
 
 import asyncio
+import json
+import os
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
@@ -56,6 +62,23 @@ class Waited:
     reason: str
 
 
+def _log_wait(wait: Waited) -> None:
+    path = os.environ.get("HARNESS_RETRY_LOG")
+    if not path:
+        return
+    line = {
+        "time": time.time(),
+        "attempt": wait.attempt,
+        "seconds": wait.seconds,
+        "reason": wait.reason,
+    }
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+    except OSError:
+        pass  # ölçüm kaydı ajanı düşürmemeli
+
+
 @dataclass
 class RetryingLLM:
     """Yalnız `complete` sunan istemci için yeniden deneme sarmalayıcısı."""
@@ -72,7 +95,9 @@ class RetryingLLM:
         seconds = self.policy.delay(attempt, error)
         if waited + seconds > self.policy.max_total_wait:
             raise error
-        self.waits.append(Waited(attempt, seconds, str(error)[:200]))
+        wait = Waited(attempt, seconds, str(error)[:200])
+        self.waits.append(wait)
+        _log_wait(wait)
         await self.sleep(seconds)
         return waited + seconds
 

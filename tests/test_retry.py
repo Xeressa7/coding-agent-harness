@@ -1,6 +1,8 @@
 """Yeniden deneme: 429/5xx/bağlantı hatasında bekle, akış başladıktan sonra asla."""
 
+import json
 from collections.abc import AsyncGenerator, Sequence
+from pathlib import Path
 
 import httpx
 import pytest
@@ -106,3 +108,23 @@ async def test_complete_is_retried_and_streaming_capability_is_kept() -> None:
 def test_retry_after_header_parsing() -> None:
     assert retry_after_seconds("12") == 12 and retry_after_seconds("1.5") == 1.5
     assert retry_after_seconds(None) is None and retry_after_seconds("Wed, 21 Oct") is None
+
+
+async def test_waits_go_to_the_retry_log_only_when_asked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / "retry.jsonl"
+    monkeypatch.delenv("HARNESS_RETRY_LOG", raising=False)
+    _, sleep = recorder()
+    inner = Flaky([LLMError("HTTP 429", status=429, retry_after=3)])
+    await collect(RetryingStreamingLLM(inner, RetryPolicy(), sleep))  # type: ignore[arg-type]
+    assert not log.exists()
+
+    monkeypatch.setenv("HARNESS_RETRY_LOG", str(log))
+    inner = Flaky(
+        [LLMError("HTTP 429", status=429, retry_after=3), LLMError("HTTP 503", status=503)]
+    )
+    await collect(RetryingStreamingLLM(inner, RetryPolicy(), sleep))  # type: ignore[arg-type]
+    lines = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert [(w["attempt"], w["seconds"]) for w in lines] == [(1, 3), (2, 4.0)]
+    assert "429" in lines[0]["reason"]
