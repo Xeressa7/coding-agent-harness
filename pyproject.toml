@@ -20,6 +20,10 @@ dependencies = [
     "uvicorn[standard]>=0.34",
 ]
 
+[project.optional-dependencies]
+# `harness desktop` için; çekirdek bağımlılık değil (uv sync --extra desktop).
+desktop = ["pywebview>=5.3,<6"]
+
 [project.scripts]
 harness = "harness.cli.app:main"
 
