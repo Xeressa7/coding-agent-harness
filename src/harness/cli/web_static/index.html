@@ -57,10 +57,18 @@
   .msg { margin-bottom: 14px; max-width: 70ch; }
   .msg .role { color: var(--primary); font-weight: 600; margin-bottom: 2px; }
   .msg.user { border-left: 2px solid var(--primary); padding-left: 10px; }
+  .thought {
+    color: var(--muted);
+    font-style: italic;
+    font-size: 12px;
+    margin-bottom: 6px;
+    white-space: pre-wrap;
+    max-width: 70ch;
+  }
   .tool { color: var(--muted); margin: 4px 0; font-size: 13px; }
   .tool.error { color: var(--danger); }
   .status { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  #permission {
+  .ask-box {
     display: none;
     margin: 8px 0;
     padding: 10px 12px;
@@ -68,7 +76,7 @@
     border-radius: 6px;
     background: var(--surface);
   }
-  #permission button {
+  .ask-box button {
     margin-top: 8px;
     margin-right: 8px;
     padding: 4px 12px;
@@ -79,7 +87,19 @@
     cursor: pointer;
     font-family: inherit;
   }
-  #permission button.primary { border-color: var(--primary); color: var(--primary); }
+  .ask-box button.primary { border-color: var(--primary); color: var(--primary); }
+  .ask-box input[type="text"] {
+    display: block;
+    margin-top: 8px;
+    width: 100%;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 13px;
+  }
   #composer {
     display: flex;
     gap: 8px;
@@ -119,7 +139,8 @@
     <div class="example" id="example">Bu proje hangi Python sürümünü istiyor, bağımlılıkları neler?</div>
   </div>
 </div>
-<div id="permission"></div>
+<div id="permission" class="ask-box"></div>
+<div id="question" class="ask-box"></div>
 <div id="composer">
   <input id="task" type="text" placeholder="Görevini yaz…" autocomplete="off" />
   <button id="send">Gönder</button>
@@ -128,9 +149,14 @@
 const log = document.getElementById("log");
 const welcome = document.getElementById("welcome");
 const permissionBox = document.getElementById("permission");
+const questionBox = document.getElementById("question");
 const taskInput = document.getElementById("task");
 const sendButton = document.getElementById("send");
 const connStatus = document.getElementById("conn");
+
+// Akan cevabın/düşüncenin o anki DOM düğümleri; model_replied'da sıfırlanır.
+let currentReply = null;
+let currentThought = null;
 
 const proto = location.protocol === "https:" ? "wss:" : "ws:";
 const ws = new WebSocket(`${proto}//${location.host}/ws`);
@@ -139,12 +165,31 @@ function hideWelcome() {
   if (welcome) welcome.remove();
 }
 
-function addMessage(role, text, cls) {
+function createMessage(role, cls) {
   hideWelcome();
   const div = document.createElement("div");
   div.className = "msg" + (cls ? " " + cls : "");
-  div.innerHTML = `<div class="role">${role}</div><div></div>`;
-  div.lastElementChild.textContent = text;
+  div.innerHTML = `<div class="role">${role}</div><div class="body"></div>`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+function appendToBody(div, text) {
+  div.querySelector(".body").textContent += text;
+  log.scrollTop = log.scrollHeight;
+}
+
+function addMessage(role, text, cls) {
+  const div = createMessage(role, cls);
+  appendToBody(div, text);
+  return div;
+}
+
+function createThought() {
+  hideWelcome();
+  const div = document.createElement("div");
+  div.className = "thought";
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
   return div;
@@ -183,6 +228,35 @@ function askPermission(call) {
   }
 }
 
+function askQuestion(question, options) {
+  questionBox.style.display = "block";
+  questionBox.innerHTML = `<div>${question}</div>`;
+  const sendAnswer = (answer) => {
+    ws.send(JSON.stringify({ answer }));
+    questionBox.style.display = "none";
+    questionBox.innerHTML = "";
+  };
+  for (const option of options || []) {
+    const btn = document.createElement("button");
+    btn.textContent = option;
+    btn.onclick = () => sendAnswer(option);
+    questionBox.appendChild(btn);
+  }
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "cevabını yaz… (boş bırakırsan model kendi varsayımıyla devam eder)";
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") sendAnswer(input.value);
+  });
+  questionBox.appendChild(input);
+  const sendBtn = document.createElement("button");
+  sendBtn.className = "primary";
+  sendBtn.textContent = "Gönder";
+  sendBtn.onclick = () => sendAnswer(input.value);
+  questionBox.appendChild(sendBtn);
+  input.focus();
+}
+
 ws.onopen = () => {
   connStatus.textContent = "bağlandı";
   sendButton.disabled = false;
@@ -199,14 +273,32 @@ ws.onmessage = (raw) => {
       addMessage("Sen", event.task, "user");
       sendButton.disabled = true;
       break;
+    case "model_text_delta":
+      if (!currentReply) currentReply = createMessage("Ajan");
+      appendToBody(currentReply, event.text);
+      break;
+    case "model_reasoning_delta":
+      if (!currentThought) currentThought = createThought();
+      currentThought.textContent += event.text;
+      log.scrollTop = log.scrollHeight;
+      break;
     case "model_replied":
-      if (event.text) addMessage("Ajan", event.text);
+      // Akış vermeyen adaptörde currentReply hiç kurulmamıştır; burada tek seferde eklenir.
+      if (!currentReply && event.text) addMessage("Ajan", event.text);
+      currentReply = null;
+      currentThought = null;
       for (const call of event.tool_calls || []) {
         addNote(`→ araç isteği: ${describeCall(call)}`);
       }
       break;
     case "permission_requested":
       askPermission(event.call);
+      break;
+    case "question_asked":
+      askQuestion(event.question, event.options);
+      break;
+    case "tool_started":
+      addNote(`● ${event.call.name} çalışıyor…`);
       break;
     case "tool_finished": {
       const r = event.result;
