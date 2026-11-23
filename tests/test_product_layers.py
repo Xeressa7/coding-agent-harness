@@ -136,5 +136,5 @@ def test_scope_focus_appends_its_sentences_only_when_on() -> None:
     off = load_system_prompt(get_preset("bash"))
 
     assert on.startswith(off)
-    assert "bağımlılıkları yeniden kurma" in on and "bağımlılıkları yeniden kurma" not in off
+    assert "Kurulu ortamla çalış" in on and "Kurulu ortamla çalış" not in off
     assert "<!--" not in on
