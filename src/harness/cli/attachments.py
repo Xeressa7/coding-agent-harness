@@ -9,8 +9,7 @@ import hashlib
 import os
 import shlex
 from pathlib import Path
-from urllib.parse import urlparse
-from urllib.request import url2pathname
+from urllib.parse import unquote, urlparse
 
 from harness.core.config import HARNESS_HOME
 from harness.messages import ImageAttachment
@@ -71,6 +70,14 @@ def from_file(path: Path, folder: Path | None = None) -> ImageAttachment:
     return store(data, path.name, folder)
 
 
+def _uri_path(uri: str) -> str:
+    """file: URI → yol. Windows'ta /C:/… → C:/… (url2pathname 3.14'te kullanımdan kalkıyor)."""
+    path = unquote(urlparse(uri).path)
+    if os.name == "nt" and len(path) > 2 and path[0] == "/" and path[2] == ":":
+        path = path[1:]
+    return path
+
+
 def split_pasted_paths(text: str, *, windows: bool) -> list[str]:
     """Yapıştırılan metni yollara böler. POSIX kipi `\\` işaretini kaçış sayar; Windows
     yolları (`C:\\Users\\…`) bozulmasın diye Windows'ta tırnaklar elle soyulur."""
@@ -94,8 +101,7 @@ def dropped_paths(text: str) -> list[Path] | None:
     paths: list[Path] = []
     for part in parts:
         if part.startswith("file:"):
-            # url2pathname yüzde kaçışlarını çözer; Windows'ta /C:/… → C:\…
-            part = url2pathname(urlparse(part).path)
+            part = _uri_path(part)
         path = Path(part).expanduser()
         if path.suffix.lower() not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
             return None
