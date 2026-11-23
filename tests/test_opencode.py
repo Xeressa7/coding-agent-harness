@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -25,7 +25,14 @@ from harness.llm.opencode import (
 )
 from harness.llm.providers import ProviderError, get_provider, make_llm, readiness
 from harness.llm.responses import ResponsesLLM
+from harness.llm.retry import RetryingLLM
 from harness.messages import AssistantMessage, ToolSpec, UserMessage
+
+
+def adapter(*args: Any) -> object:
+    """make_llm'in kurduğu asıl adaptör (yeniden deneme sarmalayıcısının içi)."""
+    return cast(RetryingLLM, make_llm(*args)).inner
+
 
 pytestmark = pytest.mark.anyio
 
@@ -219,9 +226,9 @@ async def test_providers_need_the_opencode_key() -> None:
     assert not readiness(go, {})[0] and "OPENCODE_API_KEY" in readiness(go, {})[1]
     async with httpx.AsyncClient() as http:
         with pytest.raises(ProviderError, match="OPENCODE_API_KEY"):
-            make_llm(go, "glm-5.3", None, http, {})
+            adapter(go, "glm-5.3", None, http, {})
         assert isinstance(
-            make_llm(go, "glm-5.3", None, http, {"OPENCODE_API_KEY": "k"}), OpenCodeLLM
+            adapter(go, "glm-5.3", None, http, {"OPENCODE_API_KEY": "k"}), OpenCodeLLM
         )
 
 

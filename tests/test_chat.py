@@ -216,3 +216,26 @@ def test_continue_flag_carries_the_last_sessions_history(
     # Devam edilen tur aynı kayda eklenir.
     (log,) = (tmp_path / "harness-sessions").rglob("*.jsonl")
     assert sum(isinstance(e, TaskStarted) for e in read_session(log)) == 2
+
+
+def test_print_mode_sends_images_given_with_image_option(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("harness.cli.attachments.ATTACHMENTS_HOME", tmp_path / "ekler")
+    (tmp_path / "ekran.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    (tmp_path / "not.txt").write_text("görsel değil", encoding="utf-8")
+    model = ScriptedLLM([AssistantMessage(text="bir ekran")])
+    install_model(monkeypatch, model)
+
+    result = CliRunner().invoke(cli.app, ["-p", "bu ne?", "-i", "ekran.png"])
+
+    assert result.exit_code == 0, result.output
+    sent = model.received[0][-1]
+    assert isinstance(sent, UserMessage) and [i.name for i in sent.images] == ["ekran.png"]
+
+    bad = CliRunner().invoke(cli.app, ["-p", "bu ne?", "--image", "not.txt"])
+    assert bad.exit_code != 0 and "desteklenen bir görsel değil" in bad.output
+    chat = CliRunner().invoke(cli.app, ["--plain", "--image", "ekran.png"], input="/exit\n")
+    assert chat.exit_code != 0 and "yalnız -p ile" in chat.output

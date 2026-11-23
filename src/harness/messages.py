@@ -50,11 +50,26 @@ class SystemMessage(_Record):
     text: str
 
 
+class ImageAttachment(_Record):
+    """Kullanıcı mesajına eklenmiş görsel.
+
+    Baytlar mesajda değil diskte durur (`path`): kayıt dosyası ve inceleme sayfası
+    base64 ile şişmez, aynı görsel iki kez eklense de tek dosyadır. Adaptör isteği
+    kurarken dosyayı okur; dosya silinmişse modele bunu söyleyen bir not gider.
+    """
+
+    path: str  # mutlak yol; ad içeriğin özetidir (aynı görsel = aynı dosya)
+    media_type: str  # image/png, image/jpeg, image/webp, image/gif
+    name: str = ""  # ekranda görünen ad: "Görsel 1" ya da bırakılan dosyanın adı
+    size: int = Field(default=0, ge=0)  # bayt
+
+
 class UserMessage(_Record):
-    """Kullanıcının yazdığı."""
+    """Kullanıcının yazdığı; isterse görsellerle birlikte."""
 
     role: Literal["user"] = "user"
     text: str
+    images: tuple[ImageAttachment, ...] = ()
 
 
 class TokenUsage(_Record):

@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from harness.core.anatomy import Anatomy
-from harness.messages import Message, TokenUsage, ToolCall, ToolResult, ToolSpec
+from harness.messages import ImageAttachment, Message, TokenUsage, ToolCall, ToolResult, ToolSpec
 
 
 class _Event(BaseModel):
@@ -17,6 +17,7 @@ class _Event(BaseModel):
 class TaskStarted(_Event):
     kind: Literal["task_started"] = "task_started"
     task: str
+    images: tuple[ImageAttachment, ...] = ()  # kullanıcının eklediği görseller (dosya yolları)
     provider: str | None = None  # None: sağlayıcı kaydı öncesinden kalma oturum (ChatGPT)
     model: str | None = None
     effort: str | None = None

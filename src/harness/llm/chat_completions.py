@@ -21,7 +21,8 @@ from typing import Any, Literal
 
 import httpx
 
-from harness.llm.base import Effort, LLMError, ModelInfo, error_message
+from harness.llm.base import Effort, LLMError, ModelInfo, error_message, retry_after_seconds
+from harness.llm.images import data_url, missing_note
 from harness.messages import (
     AssistantMessage,
     Message,
@@ -37,6 +38,21 @@ from harness.messages import (
 
 # Effort'un istekte nasıl yazıldığı sağlayıcıya göre değişir.
 EffortStyle = Literal["reasoning_effort", "reasoning_object", "none"]
+
+
+def user_content(message: UserMessage) -> str | list[dict[str, Any]]:
+    """Görselsiz mesaj düz metindir; görsel varsa `text` + `image_url` parçaları."""
+    if not message.images:
+        return message.text
+    parts: list[dict[str, Any]] = [{"type": "text", "text": message.text}]
+    for image in message.images:
+        url = data_url(image)
+        parts.append(
+            {"type": "image_url", "image_url": {"url": url}}
+            if url is not None
+            else {"type": "text", "text": missing_note(image)}
+        )
+    return parts
 
 
 class ChatCompletionsError(LLMError):
@@ -194,7 +210,7 @@ def build_request(
             case SystemMessage():
                 messages.append({"role": "system", "content": message.text})
             case UserMessage():
-                messages.append({"role": "user", "content": message.text})
+                messages.append({"role": "user", "content": user_content(message)})
             case AssistantMessage():
                 entry: dict[str, Any] = {"role": "assistant", "content": message.text or None}
                 if message.tool_calls:
@@ -287,6 +303,9 @@ async def list_chat_models(
         if not entry.get("id"):
             continue
         declared: dict[str, Any] = entry.get("effort") or {}
+        # OpenRouter giriş türlerini `architecture` altında bildirir; bildirmeyen: bilinmiyor.
+        architecture: dict[str, Any] = entry.get("architecture") or {}
+        modalities: list[str] | None = architecture.get("input_modalities")
         levels: list[str] = declared.get("supported_levels") or list(efforts)
         models.append(
             ModelInfo(
@@ -295,6 +314,7 @@ async def list_chat_models(
                 description=str(entry.get("description") or "")[:120],
                 default_effort=declared.get("default_level"),
                 efforts=[Effort(name=name) for name in levels],
+                images=None if modalities is None else "image" in modalities,
             )
         )
     return models
@@ -307,12 +327,17 @@ def _http_error(response: httpx.Response) -> ChatCompletionsError:
     except ValueError:
         body = None
     detail = error_message(body) or response.text[:500]
-    return ChatCompletionsError(f"HTTP {response.status_code}: {detail}")
+    return ChatCompletionsError(
+        f"HTTP {response.status_code}: {detail}",
+        status=response.status_code,
+        retry_after=retry_after_seconds(response.headers.get("retry-after")),
+    )
 
 
 def _unreachable(base_url: str, error: httpx.TransportError) -> ChatCompletionsError:
     return ChatCompletionsError(
-        f"{base_url} bağlantı hatası ({type(error).__name__}: {error}). Sunucu çalışıyor mu?"
+        f"{base_url} bağlantı hatası ({type(error).__name__}: {error}). Sunucu çalışıyor mu?",
+        transient=True,
     )
 
 

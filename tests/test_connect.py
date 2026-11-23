@@ -77,7 +77,7 @@ async def test_providers_use_the_stored_key_when_no_env_is_given() -> None:
         save_key("OPENCODE_API_KEY", "k")
         assert readiness(go) == (True, "anahtar var")
         assert readiness(get_provider("opencode"))[0]  # Zen ve Go aynı anahtarı paylaşır
-        assert isinstance(make_llm(go, "glm-5.3", None, http), OpenCodeLLM)
+        assert isinstance(make_llm(go, "glm-5.3", None, http).inner, OpenCodeLLM)  # type: ignore[attr-defined]
 
 
 # ------------------------------------------------------------ sohbet içi seçim

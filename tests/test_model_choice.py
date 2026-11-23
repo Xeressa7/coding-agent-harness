@@ -152,7 +152,13 @@ def test_choices_made_in_chat_are_saved_for_the_next_run(
     assert result.exit_code == 0, result.output
     assert "GPT-6-Astra" in result.output and "ne kadar düşünsün" in result.output
     assert load_settings(saved) == Settings(
-        provider="chatgpt", model="gpt-6-astra", effort="high", anatomy="bash", theme="koyu"
+        provider="chatgpt",
+        model="gpt-6-astra",
+        effort="high",
+        anatomy="bash",
+        theme="koyu",
+        panel="ozet",
+        thinking="katli",
     )
     config = cli.resolve_config(None, None, None)
     assert (config.model, config.effort, config.anatomy.name) == ("gpt-6-astra", "high", "bash")

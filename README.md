@@ -84,6 +84,8 @@ yazdıkça süzülen bir pencere (↑/↓, Enter, Esc), sade akışta numaralı 
   okunduysa o okumadan çıkarılır).
 - `/theme`: renk teması (koyu, açık, yüksek-kontrast, renk-körü; `~/.harness/theme.toml`
   ile kişisel). Tam ekranda Ctrl+T sıradakine geçer. `NO_COLOR` sade akışı renksiz yapar.
+- `/panel` (`/flow`): sağ panel görünümü (özet, akış, kapalı; Ctrl+B dolaşır).
+  `/thinking` (`/thoughts`): düşünce görünümü (katlı, açık, gizli). İkisi de kalıcıdır.
 - `/status` · `/tools` · `/usage` (`/cost`) · `/new` (`/clear`) · `/inspect` · `/help` · `/exit` (`/quit`).
 
 Model, effort, anatomi ve tema seçimleri kalıcıdır: bir sonraki `harness` aynı
@@ -163,13 +165,50 @@ ister (çalışma dizini dışı her zaman reddedilir). Her araç ne yapacağın
 ## Sohbet ve görev sonrası inceleme
 
 `chat` etkileşimli terminalde Textual tabanlı **tam ekran** açar: solda kaydırılabilir
-konuşma, sağda yaklaşık %20 genişlikte bağımsız işlem akışı, altta sabit mesaj
-editörü bulunur. Çok dar terminalde sağ panelin okunabilir minimum genişliği korunur.
-Konuşmanın sağ kenarındaki scrollbar, fare tekerleği veya PageUp/PageDown ile
-kaydırılır; yukarı okurken yeni metin görünümü aşağı çekmez. **En alta** düğmesi
-veya Ctrl+End son yanıta döner. Sağ akış paneli ayrıca kaydırılabilir.
+konuşma, sağda panel, altta sabit mesaj editörü bulunur. Sağ panelin üç görünümü var
+(`/panel`, Ctrl+B sıradakine geçer, seçim kalıcıdır):
 
-Enter ya da Gönder mesajı yollar; Shift+Enter yeni satır ekler (Ctrl+Enter da gönderir).
+| Görünüm | Sağda | Sohbette |
+|---|---|---|
+| `ozet` (varsayılan) | Tur/adım/süre sayacı, şu an ne çalıştığı, plan, dokunulan dosyalar (O okundu, D düzenlendi, Y yazıldı, S silindi; değişenler üstte) ve oturum ölçüleri (model çağrısı, araç/hata, token, bağlam) | Her araç tek, soluk bir satır: `✓ read_file · 2 satır` |
+| `akis` | Her olay ayrı satır: eğitim ve izleme için | Araç satırı yok (akıştadır) |
+| `kapali` | Panel yok | Her araç tek satır |
+
+Araç satırı başlarken `● ad …` yazar, bitince aynı satır sonuca döner (iki ayrı satır
+olmaz). Yol, komut ve çıktı canlı ekranda görünmez; bunlar rapordadır. 100 sütundan dar
+terminalde panel kendiliğinden gizlenir, araçlar sohbete geçer. Konuşmanın sağ
+kenarındaki scrollbar, fare tekerleği veya PageUp/PageDown ile kaydırılır; yukarı
+okurken yeni metin görünümü aşağı çekmez. **En alta** düğmesi veya Ctrl+End son
+yanıta döner. Sağ panel ayrıca kaydırılabilir.
+
+Enter ya da Gönder mesajı yollar. Yeni satır: **Ctrl+J** ya da satır sonunda `\` +
+Enter (her terminalde çalışır); Shift+Enter yalnız gelişmiş klavye protokolünü
+destekleyen terminallerde (kitty, WezTerm, foot, Ghostty) ayrıdır, GNOME Terminal ve
+Konsole onu düz Enter olarak yollar. **Ctrl+V** sistem panosunu yapıştırır (Linux'ta
+`wl-paste`/`xclip`); kopyalama (`/copy`, seçip Ctrl+C) terminalin OSC 52 desteğine ek
+olarak `wl-copy`/`xclip` ile de yazar, çünkü VTE tabanlı terminaller OSC 52'yi yok sayar.
+Wayland'da `wl-clipboard` paketi önerilir. **Ctrl+C** sırayla: seçili metni kopyalar,
+çalışan turu durdurur, taslağı siler; boştayken art arda iki kez basılırsa çıkar.
+
+Kısayollar `~/.harness/keybindings.json` ile değiştirilir: `{"panel": "f2",
+"quit": "ctrl+q,ctrl+d"}`. Adlar: `quit`, `stop`, `interrupt`, `panel`, `theme`,
+`latest`, `page_up`, `page_down`; değer Textual tuş adıdır (virgül: birden çok tuş).
+Alt satırdaki kısayol listesi değişikliği gösterir.
+
+**Görsel ekleme.** Mesaja görsel üç yoldan eklenir:
+
+- Panoda metin yoksa **Ctrl+V** panodaki görseli ekler (ekran görüntüsü). Linux'ta `wl-paste` ya da `xclip` gerekir.
+- Görsel dosyasını terminale **sürükleyip bırakmak** onu ekler. Terminal yolu yapıştırır; tırnaklı, `file://` ya da kaçışlı boşluklu yollar tanınır. Yapıştırılanın tamamı var olan görsel dosyaları değilse metin olarak kalır.
+- Tek görevde `harness -p "bu ne?" -i ekran.png` (`--image` tekrarlanabilir; sohbette değil, yalnız `-p` ile).
+
+Ek, imlecin yerine `[Görsel 1]` etiketi olarak girer. Mesaj kutusunun üstündeki satır ekleri gösterir. Etiket metinden silinirse ek de düşer.
+
+PNG, JPEG, GIF ve WebP kabul edilir; tür dosya adından değil ilk baytlardan anlaşılır. Görsel başına sınır 5 MB'tır (Anthropic API'sinin sınırı).
+
+Baytlar mesajın içine yazılmaz: görsel, içeriğinin özetiyle `~/.harness/attachments/` altına kaydedilir, mesaj ve kayıt yalnız yolu taşır. `/resume` görselleri de geri yükler; dosya silinmişse modele bunu söyleyen bir not gider.
+
+Model listesi görsel desteğini bildiriyorsa ona bakılır: OpenCode modellerinde models.dev, ChatGPT ve OpenRouter'da API'nin giriş türleri; Claude modelleri her zaman görsel okur. Görsel desteklemeyen modelde mesaj gönderilmez, taslak korunur ve durum satırı `/model` önerir. Destek bilinmiyorsa görsel gönderilir.
+
 Model çalışırken yeni taslak yazılabilir ama ikinci görev başlatılmaz. Model `ask_user`
 ile soru sorduğunda soru konuşmaya bir mesaj olarak düşer; cevap alt editörden yazılır
 (Enter ya da Gönder cevabı yollar, boş Enter cevap yok demektir; soru beklerken de bilgi
@@ -194,8 +233,11 @@ tamamlanmadı** görünür; kısmi metin başarı/geçmiş yanıtı sayılmaz.
 Metin parçalarının sayısı token sayısı değildir; usage yine sağlayıcı tamamlanma
 bilgisinden gelir. Modelin araç öncesi kullanıcıya yönelik açıklaması akabilir;
 araç JSON argümanları ve sonuçları gösterilmez. Sağlayıcının verdiği düşünce
-(özet ya da açık düşünce) cevabın üstünde soluk bir **Düşünce** bloğunda canlı akar;
-tam ekranda başlığına tıklayınca katlanır, sade akışta `düşünce ·` ile başlar.
+(özet ya da açık düşünce) cevabın üstünde soluk bir **Düşünce** bloğunda durur.
+Tam ekranda görünümü `/thinking` seçer: `katli` (varsayılan; tek satır "Düşünce · 37
+kelime", akarken "Düşünüyor…", tıklayınca açılır), `acik` (akarken tamamen görünür) ya
+da `gizli` (çizilmez; kayıtta ve incelemede kalır). Görünüm değişince geçmiş düşünceler
+de uyar. Sade akışta `düşünce ·` ile başlar.
 
 Sohbet araç argümanlarını/çıktılarını ekrana dökmez; her araç için yalnız ne olduğu
 tek satırda görünür ("✓ read_file · 40 satır"). Tur özeti tam ekranda sağ akış

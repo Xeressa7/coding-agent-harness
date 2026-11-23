@@ -119,7 +119,7 @@ def history_from_events(events: Sequence[Event]) -> list[Message]:
     for event in events:
         if isinstance(event, TaskStarted):
             pending, waiting = [], set()
-            history.append(UserMessage(text=event.task))
+            history.append(UserMessage(text=event.task, images=event.images))
         elif isinstance(event, ModelReplied):
             pending, waiting = [], set()
             reply = AssistantMessage(

@@ -49,6 +49,7 @@ from harness.core.pruning import ContextPruner
 from harness.llm.base import LLMClient, StreamingLLMClient
 from harness.messages import (
     AssistantMessage,
+    ImageAttachment,
     Message,
     ReasoningDelta,
     SystemMessage,
@@ -192,12 +193,15 @@ class Agent:
         count = sum(line.startswith("- ") for line in notes.splitlines())
         return f"[harness · hafıza]\n{notes}", f"{path} → {count} not"
 
-    async def run(self, task: str) -> AsyncGenerator[Event, bool | str | None]:
+    async def run(
+        self, task: str, images: Sequence[ImageAttachment] = ()
+    ) -> AsyncGenerator[Event, bool | str | None]:
+        """Bir görevi çalıştırır; görseller (varsa) kullanıcı mesajına eklenir."""
         request = task
         if self.notes:
             task = "\n\n".join([*self.notes, task])
             self.notes.clear()
-        self.history.append(UserMessage(text=task))
+        self.history.append(UserMessage(text=task, images=tuple(images)))
         guard = RepeatGuard() if self._anatomy and self._anatomy.loop_guard else None
         tests = TestGuard(self._root) if self._layers.test_guard and self._root else None
         pruner = ContextPruner() if self._layers.context_prune else None
@@ -210,6 +214,7 @@ class Agent:
         step = 0
         yield TaskStarted(
             task=task,
+            images=tuple(images),
             provider=self._provider,
             model=self._model_label,
             effort=self._effort,
