@@ -94,6 +94,8 @@ class Anatomy(BaseModel):
     persistent_cwd: bool = False
     ask_user: bool = False  # belirsiz istekte kullanıcıya soru aracı (tools/ask_user.py)
     finish_check: bool = False  # "bitti"de eksik varsa bir kez hatırlatır (core/finish_check.py)
+    # metne düz JSON yazılan araç çağrısını yakalar (core/tool_call_fallback.py)
+    tool_call_fallback: bool = False
 
     def tool_registry(self, root: Path) -> ToolRegistry:
         """Açık araçları, çalışma dizinine bağlı olarak kurar."""
@@ -109,13 +111,18 @@ PRESETS: dict[str, Anatomy] = {
     "raw": Anatomy(name="raw", prompt="raw", save_code_blocks=True, agents_md=False),
     "files": Anatomy(name="files", tools=_FILE_TOOLS),
     "bash": Anatomy(
-        name="bash", tools=(*_FILE_TOOLS, *_BASH_TOOLS), persistent_cwd=True, ask_user=True
+        name="bash",
+        tools=(*_FILE_TOOLS, *_BASH_TOOLS),
+        persistent_cwd=True,
+        ask_user=True,
+        tool_call_fallback=True,
     ),
     "full": Anatomy(
         name="full",
         tools=(*_FILE_TOOLS, *_BASH_TOOLS, "fetch_url"),
         persistent_cwd=True,
         ask_user=True,
+        tool_call_fallback=True,
     ),
 }
 DEFAULT_PRESET = "bash"  # standart harness: komut çalıştırır, her çağrıda izin sorar
@@ -133,6 +140,8 @@ LAYERS: dict[str, str] = {
     "persistent_cwd": "bash'te `cd` sonraki komutlara taşınır; kök dışına çıkmaz",
     "ask_user": "belirsiz istekte kullanıcıya soru sorma aracı; -p'de cevap yok, varsayım yazar",
     "finish_check": "bitirirken: düzenlemeden sonra komut yoksa ya da plan yarımsa bir kez sorar",
+    "tool_call_fallback": "metne düz JSON yazılan araç çağrısını (bilinen ad + şemaya uyan "
+    "argüman) yakalar; model boş elle 'bitti' sanılmaz",
 }
 
 

@@ -82,16 +82,30 @@ class ChatCompletionsLLM:
     async def complete(
         self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
     ) -> AssistantMessage:
+        url = f"{self._base_url}/chat/completions"
         try:
             response = await self._http.post(
-                f"{self._base_url}/chat/completions",
-                json=self._body(history, tools),
-                headers=self._headers(),
+                url, json=self._body(history, tools), headers=self._headers()
             )
         except httpx.TransportError as e:
             raise _unreachable(self._base_url, e) from e
         if response.status_code != 200:
-            raise _http_error(response)
+            error = _http_error(response)
+            if not (self._effort and _thinking_unsupported(error)):
+                raise error
+            retry_body = build_request(
+                self._model,
+                history,
+                tools,
+                effort_style=self._effort_style,
+                source=self._base_url,
+            )
+            try:
+                response = await self._http.post(url, json=retry_body, headers=self._headers())
+            except httpx.TransportError as e:
+                raise _unreachable(self._base_url, e) from e
+            if response.status_code != 200:
+                raise _http_error(response)
         return parse_response(response.json(), source=self._base_url)
 
 
@@ -109,11 +123,29 @@ class StreamingChatCompletionsLLM(ChatCompletionsLLM):
     async def stream(
         self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
     ) -> AsyncGenerator[TextDelta | ReasoningDelta | AssistantMessage, None]:
+        """Düşünme desteklemeyen modelde (Ollama 400 "does not support thinking") `effort`
+        olmadan bir kez sessizce yeniden dener; hiçbir parça henüz akmadan oluşan bir hata
+        olduğu için yarım yanıt tekrarlanmaz."""
+        body = self._body(history, tools)
+        try:
+            async for item in self._stream_with_body(body):
+                yield item
+            return
+        except ChatCompletionsError as e:
+            if not (self._effort and _thinking_unsupported(e)):
+                raise
+        retry_body = build_request(
+            self._model, history, tools, effort_style=self._effort_style, source=self._base_url
+        )
+        async for item in self._stream_with_body(retry_body):
+            yield item
+
+    async def _stream_with_body(
+        self, body: dict[str, Any]
+    ) -> AsyncGenerator[TextDelta | ReasoningDelta | AssistantMessage, None]:
         started = perf_counter()
         first_text_seconds: float | None = None
-        body = self._body(history, tools)
-        body["stream"] = True
-        body["stream_options"] = {"include_usage": True}
+        body = {**body, "stream": True, "stream_options": {"include_usage": True}}
         texts: list[str] = []
         reasoning: list[str] = []
         calls: dict[int, dict[str, str]] = {}
@@ -307,7 +339,14 @@ def _http_error(response: httpx.Response) -> ChatCompletionsError:
     except ValueError:
         body = None
     detail = error_message(body) or response.text[:500]
-    return ChatCompletionsError(f"HTTP {response.status_code}: {detail}")
+    return ChatCompletionsError(
+        f"HTTP {response.status_code}: {detail}", status=response.status_code
+    )
+
+
+def _thinking_unsupported(error: ChatCompletionsError) -> bool:
+    """Ollama gibi yerel sağlayıcıların "düşünme" desteklemeyen modelde verdiği 400."""
+    return error.status == 400 and "thinking" in str(error).lower()
 
 
 def _unreachable(base_url: str, error: httpx.TransportError) -> ChatCompletionsError:

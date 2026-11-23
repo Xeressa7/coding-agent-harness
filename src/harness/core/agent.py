@@ -46,6 +46,7 @@ from harness.core.guards import RepeatGuard, TestGuard
 from harness.core.permissions import Decision, PermissionManager
 from harness.core.project_context import CtxMemory, MemoryUnavailable, load_instructions
 from harness.core.pruning import ContextPruner
+from harness.core.tool_call_fallback import recover_tool_calls
 from harness.llm.base import LLMClient, StreamingLLMClient
 from harness.messages import (
     AssistantMessage,
@@ -295,7 +296,21 @@ class Agent:
                     timestamp=datetime.now(UTC),
                 )
 
-                if not reply.tool_calls:
+                calls = reply.tool_calls
+                if not calls and self._layers.tool_call_fallback:
+                    recovered = recover_tool_calls(reply.text, self._tools)
+                    if recovered:
+                        calls = recovered
+                        yield HarnessIntervened(
+                            step=step,
+                            layer="tool_call_fallback",
+                            action="recover",
+                            summary="metne yazılmış araç çağrısı yakalandı: "
+                            + ", ".join(c.name for c in recovered),
+                            timestamp=datetime.now(UTC),
+                        )
+
+                if not calls:
                     missing = finish.check(reply.text) if finish is not None else None
                     if missing is not None:  # bir kez: eksik söylenir, döngü bir adım sürer
                         self.history.append(UserMessage(text=finish_note(missing)))
@@ -325,7 +340,7 @@ class Agent:
                     )
                     return
 
-                for call in reply.tool_calls:
+                for call in calls:
                     category, summary = self._tools.describe(call)
                     verdict = guard.check(call) if guard else None
                     if verdict is not None:

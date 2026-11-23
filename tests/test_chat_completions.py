@@ -160,6 +160,52 @@ async def test_http_error_is_reported() -> None:
             await ChatCompletionsLLM("http://x/v1", "m", http).complete([UserMessage(text="x")])
 
 
+async def test_http_error_carries_status_code_for_rejects_key() -> None:
+    async with fake_api('{"error": "unauthorized"}', status=401) as http:
+        with pytest.raises(ChatCompletionsError) as caught:
+            await ChatCompletionsLLM("http://x/v1", "m", http).complete([UserMessage(text="x")])
+    assert caught.value.status == 401 and caught.value.rejects_key
+
+
+async def test_thinking_unsupported_retries_once_without_effort() -> None:
+    error_body = json.dumps({"error": {"message": "qwen2.5-coder:7b does not support thinking"}})
+    ok_body = json.dumps({"choices": [{"message": {"role": "assistant", "content": "tamam"}}]})
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return (
+            httpx.Response(400, text=error_body)
+            if len(seen) == 1
+            else httpx.Response(200, text=ok_body)
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        reply = await ChatCompletionsLLM("http://x/v1", "m", http, effort="high").complete(
+            [UserMessage(text="x")]
+        )
+
+    assert reply.text == "tamam"
+    assert len(seen) == 2
+    assert json.loads(seen[0].content)["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in json.loads(seen[1].content)
+
+
+async def test_plain_400_without_thinking_in_the_message_is_not_retried() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(400, text=json.dumps({"error": "bozuk istek"}))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        with pytest.raises(ChatCompletionsError, match="bozuk istek"):
+            await ChatCompletionsLLM("http://x/v1", "m", http, effort="high").complete(
+                [UserMessage(text="x")]
+            )
+    assert len(seen) == 1
+
+
 async def test_missing_choices_is_reported() -> None:
     async with fake_api("{}") as http:
         with pytest.raises(ChatCompletionsError, match="choices"):
