@@ -12,7 +12,7 @@ Oturum sonunda capture kararı ver: kalıcı bulgu varsa nota yazıp `ctx close 
 yoksa `ctx close --yok "<gerekçe>"` — karar vermemek geçersizdir.
 
 <!-- ctx:index:basla -->
-### Hafıza haritası — coding_harness · kapsam: current · 19 not
+### Hafıza haritası — coding_harness · kapsam: current · 20 not
 
 Bu bir **harita**, notun kendisi değil: ilgili satırı görünce **o notu aç**. Hedefli arama `ctx search "<sorgu>"`; bütün korpusu topluca yükleme.
 Açık işler `.memory/tasks/OPEN.md` · oturum devamı `.memory/sessions/CURRENT.md`.
@@ -40,5 +40,6 @@ Açık işler `.memory/tasks/OPEN.md` · oturum devamı `.memory/sessions/CURREN
 **pitfalls/**
 - `ev-klasoru-git-deposu.md` — C:\Users\onur5 commit'siz bir git deposu; "yukarı çıkıp .git ara" mantığı ev klasörünü proje…
 - `heredoc-ters-bolu.md` — Bash aracından heredoc ile yazılan Python/dosya içeriğindeki \n gerçek satır sonuna dönüştü;…
+- `linux-terminal-tuslari.md` — GNOME Terminal (VTE) Shift+Enter'ı düz Enter yollar, OSC 52 kopyalamayı yok sayar; Textual'ın…
 - `windows-konsol-turkce.md` — Git Bash üzerinden çalıştırılan Python betiğinin çıktısında ş/ı/ğ bozuk göründü; CLI adımında…
 <!-- ctx:index:bitir -->

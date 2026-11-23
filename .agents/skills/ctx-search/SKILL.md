@@ -1,9 +1,9 @@
 ---
-name: ctx-ara
+name: ctx-search
 description: Göreve başlamadan kanonik hafızada (Markdown + Git) kavram ve dosya yoluyla ara; isabet eden 1-3 notu aç. Bütün korpusu asla topluca yükleme.
 ---
 
-# ctx-ara — hafızada ara
+# ctx-search — hafızada ara
 
 Kanonik hafıza bu reponun `context.yaml → memory_path` adresindedir; bu repo
 için retrieval filtresi `AGENTS.md` router bloğunda yazar. Harness-native

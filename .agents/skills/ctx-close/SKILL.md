@@ -1,9 +1,9 @@
 ---
-name: ctx-kapat
+name: ctx-close
 description: Oturumu capture kararıyla kapat. Kalıcı bulgu varsa nota yazıp `ctx close --not`, yoksa gerekçeyle `ctx close --yok`. Karar vermemek geçersizdir.
 ---
 
-# ctx-kapat — oturumu kapat
+# ctx-close — oturumu kapat
 
 Kapanışta not yazmayı hatırlamak disiplindir ve güvenilmez; bu skill
 mekanizmayı işletir. Yargı senin, disiplin aracın.
