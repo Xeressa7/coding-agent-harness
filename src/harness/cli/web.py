@@ -3,7 +3,9 @@
 Çekirdek hiçbir şey bilmez: Agent.run() aynı olayları (events.py) üretir, biz
 onları JSON'a çevirip soket üzerinden akıtırız. "Sor" kararında aynı asend
 protokolü kullanılır — PermissionRequested gönderilir, tarayıcıdan gelen
-cevap (allow/deny/always) agent'a asend ile geri verilir. Her WebSocket
+cevap (allow/deny/always) agent'a asend ile geri verilir; ask_user aracının
+QuestionAsked'ı da aynı şekilde, tarayıcının gönderdiği serbest metin
+cevapla (ya da boşsa "kimse yok" varsayımıyla) geri verilir. Her WebSocket
 bağlantısı kendi Agent'ını (ve izin hafızasını) alır; LLM istemcisi paylaşılır.
 
 `log_dir` verilirse her bağlantı kendi oturum kaydını yazar (TUI ve sade akışla
@@ -21,7 +23,7 @@ from pydantic import TypeAdapter
 from harness.cli.commands import new_session_log
 from harness.core.agent import Agent
 from harness.core.anatomy import Anatomy
-from harness.core.events import Event, PermissionRequested
+from harness.core.events import Event, PermissionRequested, QuestionAsked
 from harness.core.permissions import PermissionManager
 from harness.core.session_log import SessionLogger
 from harness.llm.base import LLMClient
@@ -99,5 +101,9 @@ async def _run_turn(
                 if choice == "always":
                     agent.permissions.grant(event.call.name)
                 send = choice in ("allow", "always")
+            elif isinstance(event, QuestionAsked):
+                reply: dict[str, Any] = await websocket.receive_json()
+                given = reply.get("answer")
+                send = given if isinstance(given, str) else None
     except StopAsyncIteration:
         pass

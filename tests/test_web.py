@@ -1,6 +1,7 @@
 """Web ön yüzü: tek sayfa + WebSocket'in CLI/TUI ile aynı çekirdeği sürdüğünü doğrular."""
 
 import json
+from collections.abc import AsyncGenerator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,15 @@ from harness.core.anatomy import get_preset
 from harness.core.events import TaskStarted
 from harness.core.session_log import read_session
 from harness.llm.scripted import ScriptedLLM
-from harness.messages import AssistantMessage, ToolCall
+from harness.messages import (
+    AssistantMessage,
+    Message,
+    ReasoningDelta,
+    TextDelta,
+    ToolCall,
+    ToolSpec,
+)
+from harness.tools.ask_user import NO_ANSWER
 
 
 def write_call(call_id: str, path: str, content: str) -> AssistantMessage:
@@ -21,6 +30,30 @@ def write_call(call_id: str, path: str, content: str) -> AssistantMessage:
     return AssistantMessage(
         tool_calls=(ToolCall(id=call_id, name="write_file", arguments=arguments),)
     )
+
+
+def ask_call(call_id: str, question: str) -> AssistantMessage:
+    arguments = json.dumps({"question": question, "options": []})
+    return AssistantMessage(
+        tool_calls=(ToolCall(id=call_id, name="ask_user", arguments=arguments),)
+    )
+
+
+class StreamingModel:
+    """Metni ve düşünceyi parça parça akıtan basit bir sahte model."""
+
+    async def complete(
+        self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> AssistantMessage:
+        raise AssertionError("Streaming capability should be used")
+
+    async def stream(
+        self, history: Sequence[Message], tools: Sequence[ToolSpec] = ()
+    ) -> AsyncGenerator[TextDelta | ReasoningDelta | AssistantMessage, None]:
+        yield ReasoningDelta(text="düşünüyorum")
+        yield TextDelta(text="me")
+        yield TextDelta(text="rhaba")
+        yield AssistantMessage(text="merhaba", reasoning="düşünüyorum")
 
 
 def recv(ws: WebSocketTestSession) -> dict[str, Any]:
@@ -57,6 +90,68 @@ def test_events_stream_and_task_finishes(tmp_path: Path) -> None:
 
     assert kinds[0] == "task_started"
     assert "model_replied" in kinds
+
+
+def test_streaming_text_and_reasoning_arrive_as_separate_events(tmp_path: Path) -> None:
+    app = create_app(get_preset("raw"), tmp_path, "kural", StreamingModel)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"task": "selam"})
+        text_deltas: list[str] = []
+        reasoning_deltas: list[str] = []
+        while True:
+            event = recv(ws)
+            if event["kind"] == "model_text_delta":
+                text_deltas.append(event["text"])
+            if event["kind"] == "model_reasoning_delta":
+                reasoning_deltas.append(event["text"])
+            if event["kind"] == "task_finished":
+                break
+
+    assert "".join(text_deltas) == "merhaba"
+    assert "".join(reasoning_deltas) == "düşünüyorum"
+
+
+def test_browser_answer_to_ask_user_reaches_the_tool(tmp_path: Path) -> None:
+    model = ScriptedLLM([ask_call("c1", "Hangi dosya?"), AssistantMessage(text="tamam")])
+    app = create_app(get_preset("bash"), tmp_path, "kural", lambda: model)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"task": "sor"})
+        tool_content = None
+        while True:
+            event = recv(ws)
+            if event["kind"] == "question_asked":
+                assert event["question"] == "Hangi dosya?"
+                ws.send_json({"answer": "a.py"})
+            if event["kind"] == "tool_finished":
+                tool_content = event["result"]["content"]
+            if event["kind"] == "task_finished":
+                break
+
+    assert tool_content == "Kullanıcının cevabı: a.py"
+
+
+def test_no_answer_to_ask_user_falls_back_to_the_assumption_note(tmp_path: Path) -> None:
+    model = ScriptedLLM([ask_call("c1", "Hangi dosya?"), AssistantMessage(text="tamam")])
+    app = create_app(get_preset("bash"), tmp_path, "kural", lambda: model)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"task": "sor"})
+        tool_content = None
+        while True:
+            event = recv(ws)
+            if event["kind"] == "question_asked":
+                ws.send_json({"answer": ""})
+            if event["kind"] == "tool_finished":
+                tool_content = event["result"]["content"]
+            if event["kind"] == "task_finished":
+                break
+
+    assert tool_content == NO_ANSWER
 
 
 def test_allow_choice_lets_the_tool_run(tmp_path: Path) -> None:
