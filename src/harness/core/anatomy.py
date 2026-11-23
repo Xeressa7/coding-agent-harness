@@ -49,14 +49,16 @@ ToolName = Literal[
 # Araç kurucuları: (çalışma dizini, anatomi, ortam). Ortam bir kayıt defterinde tektir:
 # bash'in başlattığı arka plan işini job_output aynı iş tablosundan okur.
 _TOOL_FACTORIES: dict[ToolName, Callable[[Path, "Anatomy", LocalEnvironment], Tool[Any]]] = {
-    "read_file": lambda root, a, env: ReadFile(root=root),
+    "read_file": lambda root, a, env: ReadFile(root=root, tab_prefix=a.tool_guidance),
     "list_dir": lambda root, a, env: ListDir(root=root),
     "search": lambda root, a, env: Search(root=root),
     "write_file": lambda root, a, env: WriteFile(root=root),
-    "edit_file": lambda root, a, env: EditFile(root=root),
+    "edit_file": lambda root, a, env: EditFile(root=root, show_region=a.tool_guidance),
     "delete_file": lambda root, a, env: DeleteFile(root=root),
     "update_plan": lambda root, a, env: UpdatePlan(),
-    "bash": lambda root, a, env: Bash(env, root=root if a.persistent_cwd else None),
+    "bash": lambda root, a, env: Bash(
+        env, root=root if a.persistent_cwd else None, guidance=a.tool_guidance
+    ),
     "job_output": lambda root, a, env: JobOutput(env.jobs),
     "job_stop": lambda root, a, env: JobStop(env.jobs),
     "fetch_url": lambda root, a, env: FetchUrl(),
@@ -94,6 +96,9 @@ class Anatomy(BaseModel):
     persistent_cwd: bool = False
     ask_user: bool = False  # belirsiz istekte kullanıcıya soru aracı (tools/ask_user.py)
     finish_check: bool = False  # "bitti"de eksik varsa bir kez hatırlatır (core/finish_check.py)
+    # Araç arayüzü yönlendirmesi (G03): read_file sekmeli önek, edit_file sonucu bölgeyi gösterir,
+    # bash okuma için dosya araçlarını önerir, talimat bağımsız çağrıları birlikte istemeyi söyler.
+    tool_guidance: bool = False
 
     def tool_registry(self, root: Path) -> ToolRegistry:
         """Açık araçları, çalışma dizinine bağlı olarak kurar."""
@@ -133,6 +138,8 @@ LAYERS: dict[str, str] = {
     "persistent_cwd": "bash'te `cd` sonraki komutlara taşınır; kök dışına çıkmaz",
     "ask_user": "belirsiz istekte kullanıcıya soru sorma aracı; -p'de cevap yok, varsayım yazar",
     "finish_check": "bitirirken: düzenlemeden sonra komut yoksa ya da plan yarımsa bir kez sorar",
+    "tool_guidance": "araç arayüzü: sekmeli satır öneki, düzenleme sonucu bölge, okuma için "
+    "dosya araçları, bağımsız çağrılar birlikte",
 }
 
 

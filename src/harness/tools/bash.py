@@ -46,8 +46,13 @@ class Bash(Tool[BashParams]):
     params_model = BashParams
     category = "exec"
 
-    def __init__(self, environment: Environment, *, root: Path | None = None) -> None:
-        """root verilirse `cd` komutlar arasında korunur (kalıcı çalışma klasörü)."""
+    def __init__(
+        self, environment: Environment, *, root: Path | None = None, guidance: bool = False
+    ) -> None:
+        """root verilirse `cd` komutlar arasında korunur (kalıcı çalışma klasörü).
+
+        guidance (`tool_guidance` katmanı): açıklama okuma ve arama için dosya araçlarını
+        önerir; pilotta model dosyaları bash'te cat/sed ile parça parça okuyordu."""
         self._environment = environment
         self._root = root.resolve() if root is not None else None
         self._cwd = PurePosixPath()  # köke göre; "." kökün kendisi
@@ -57,6 +62,12 @@ class Bash(Tool[BashParams]):
                 "Bash komutu çalıştırır; çıkış kodunu, stdout ve stderr'i döner. `cd` sonraki "
                 "komutlara taşınır (kök dışına çıkmaz); dosya araçlarının yolları yine köke "
                 "göredir. Komuta girdi verilmez; etkileşimli komutlar çalışmaz."
+            )
+        if guidance:
+            self.description += (
+                " Dosya okumak için cat/head/tail/sed yerine read_file, aramak için grep/find "
+                "yerine search kullan; bash derleme, test, git ve kurulu araçları çalıştırmak "
+                "içindir."
             )
 
     @property

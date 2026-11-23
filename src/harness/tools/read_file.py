@@ -28,8 +28,17 @@ class ReadFile(Tool[ReadFileParams]):
     params_model = ReadFileParams
     category = "read"
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, tab_prefix: bool = False) -> None:
+        """tab_prefix (`tool_guidance` katmanı): satır öneki "numara + sekme" olur ve açıklamada
+        yazar. Kapalıyken önek eskisi gibi iki boşluktur; model iki boşluğu girintiye katıp
+        edit_file'da eşleşemiyordu (5. tur pilotu)."""
         self._root = root.resolve()
+        self._separator = "\t" if tab_prefix else "  "
+        if tab_prefix:
+            self.description = (
+                f'{ReadFile.description} Her satır "numara<TAB>içerik" biçimindedir: '
+                "numara ve sekme dosyanın parçası değildir, edit_file'a yazılmaz."
+            )
 
     def describe(self, params: ReadFileParams) -> str:
         if params.start_line or params.end_line:
@@ -54,7 +63,7 @@ class ReadFile(Tool[ReadFileParams]):
             line = lines[number - 1]
             if len(line) > MAX_LINE_CHARS:
                 line = f"{line[:MAX_LINE_CHARS]} … [satır {len(line)} karakter, kısaltıldı]"
-            row = f"{number:>{width}}  {line}"
+            row = f"{number:>{width}}{self._separator}{line}"
             if rows and (len(rows) >= MAX_LINES or size + len(row) + 1 > MAX_CHARS):
                 break
             rows.append(row)
