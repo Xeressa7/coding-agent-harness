@@ -1126,26 +1126,15 @@ def watch_command(
         panel.close()
 
 
-@app.command()
-def serve(
-    host: Annotated[str, typer.Option(help="Dinlenecek adres")] = "127.0.0.1",
-    port: Annotated[int, typer.Option(help="Dinlenecek port")] = 8765,
-    demo: Annotated[
-        bool, typer.Option("--demo", help="Sahte modelle, giriş gerektirmeden dener")
-    ] = False,
-    model: ModelOption = None,
-    effort: EffortOption = None,
-    anatomy_name: AnatomyOption = None,
-    ollama: Annotated[
-        bool, typer.Option("--ollama", hidden=True, help="Eski ad: -m ollama/<model> ile aynı")
-    ] = False,
-) -> None:
-    """Tarayıcıda sohbet: tek sayfa + WebSocket, aynı çekirdek döngüsü üzerinden.
-
-    Sağlayıcı ve model sohbetteki gibi seçilir (-m sağlayıcı/model, verilmezse kayıtlı
-    seçim). Her bağlantı bu projenin oturum kaydına yazılır: canlı panel ve harita
-    tarayıcı sohbetlerini de gösterir.
-    """
+def _resolve_web_session(
+    model: str | None,
+    effort: str | None,
+    anatomy_name: str | None,
+    demo: bool,
+    ollama: bool,
+    label: str,
+) -> tuple[RunConfig, Path, str]:
+    """`serve`/`desktop`'ın paylaştığı kurulum: config, hazırlık kontrolü, oturum, talimat."""
     if ollama and not (model or "").startswith("ollama/"):
         model = f"ollama/{model or 'llama3.2'}"
     config = resolve_config(model, effort, anatomy_name)
@@ -1154,8 +1143,25 @@ def serve(
         if not ready:
             console.print(Text(f"{config.provider.name} hazır değil: {why}", style="h.error"))
             raise typer.Exit(1)
-    root = start_session("web · sahte model" if demo else f"web · {config.label}")
+    root = start_session(f"{label} · sahte model" if demo else f"{label} · {config.label}")
     prompt = load_system_prompt(config.anatomy)
+    return config, root, prompt
+
+
+def _web_app_runner(
+    config: RunConfig,
+    root: Path,
+    prompt: str,
+    demo: bool,
+    host: str,
+    port: int,
+    server_box: list[Any] | None = None,
+) -> Callable[[], Coroutine[Any, Any, None]]:
+    """`serve`/`desktop`'ın paylaştığı: httpx + llm_factory + create_app + uvicorn.
+
+    `server_box` verilirse kurulan `uvicorn.Server` oraya eklenir; çağıran onu
+    (ör. pencere kapanınca) `server.should_exit = True` ile durdurabilir.
+    """
 
     async def run() -> None:
         import uvicorn
@@ -1179,14 +1185,96 @@ def serve(
                 model=None if demo else config.model,
                 effort=None if demo else config.effort,
             )
-            console.print(Text.assemble(("Tarayıcıda aç: ", "h.ok"), f"http://{host}:{port}"))
             uvicorn_config = uvicorn.Config(web_app, host=host, port=port, log_level="warning")
-            await uvicorn.Server(uvicorn_config).serve()
+            server = uvicorn.Server(uvicorn_config)
+            if server_box is not None:
+                server_box.append(server)
+            await server.serve()
 
+    return run
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option(help="Dinlenecek adres")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Dinlenecek port")] = 8765,
+    demo: Annotated[
+        bool, typer.Option("--demo", help="Sahte modelle, giriş gerektirmeden dener")
+    ] = False,
+    model: ModelOption = None,
+    effort: EffortOption = None,
+    anatomy_name: AnatomyOption = None,
+    ollama: Annotated[
+        bool, typer.Option("--ollama", hidden=True, help="Eski ad: -m ollama/<model> ile aynı")
+    ] = False,
+) -> None:
+    """Tarayıcıda sohbet: tek sayfa + WebSocket, aynı çekirdek döngüsü üzerinden.
+
+    Sağlayıcı ve model sohbetteki gibi seçilir (-m sağlayıcı/model, verilmezse kayıtlı
+    seçim). Her bağlantı bu projenin oturum kaydına yazılır: canlı panel ve harita
+    tarayıcı sohbetlerini de gösterir.
+    """
+    config, root, prompt = _resolve_web_session(model, effort, anatomy_name, demo, ollama, "web")
+    console.print(Text.assemble(("Tarayıcıda aç: ", "h.ok"), f"http://{host}:{port}"))
+    run = _web_app_runner(config, root, prompt, demo, host, port)
     try:
         asyncio.run(run())
     except KeyboardInterrupt:
         console.print("Durduruldu.")
+
+
+@app.command()
+def desktop(
+    host: Annotated[str, typer.Option(help="Dinlenecek adres")] = "127.0.0.1",
+    port: Annotated[int, typer.Option(help="Dinlenecek port")] = 8765,
+    demo: Annotated[
+        bool, typer.Option("--demo", help="Sahte modelle, giriş gerektirmeden dener")
+    ] = False,
+    model: ModelOption = None,
+    effort: EffortOption = None,
+    anatomy_name: AnatomyOption = None,
+    ollama: Annotated[
+        bool, typer.Option("--ollama", hidden=True, help="Eski ad: -m ollama/<model> ile aynı")
+    ] = False,
+    title: Annotated[str, typer.Option(help="Pencere başlığı")] = "Harness",
+) -> None:
+    """Aynı sohbeti tarayıcı sekmesi yerine bağımsız bir masaüstü penceresinde açar.
+
+    `serve` ile aynı çekirdek döngüsü ve aynı seçenekler; pywebview isteğe bağlı
+    bir bağımlılıktır (`uv sync --extra desktop`). Kurulu değilse anlaşılır bir
+    uyarı verip `serve` ile tarayıcıda açmaya döner.
+    """
+    from harness.cli import desktop as desktop_module
+
+    if not desktop_module.available():
+        console.print(Text(desktop_module.MISSING, style="h.warn"))
+        serve(
+            host=host,
+            port=port,
+            demo=demo,
+            model=model,
+            effort=effort,
+            anatomy_name=anatomy_name,
+            ollama=ollama,
+        )
+        return
+
+    config, root, prompt = _resolve_web_session(
+        model, effort, anatomy_name, demo, ollama, "masaüstü"
+    )
+    server_box: list[Any] = []
+    run = _web_app_runner(config, root, prompt, demo, host, port, server_box)
+    thread = threading.Thread(target=lambda: asyncio.run(run()), daemon=True)
+    thread.start()
+    if not desktop_module.wait_for_port(host, port, timeout=10):
+        console.print(Text(f"Sunucu başlamadı: http://{host}:{port}", style="h.error"))
+        raise typer.Exit(1)
+    try:
+        desktop_module.open_window(title, f"http://{host}:{port}")
+    finally:
+        if server_box:
+            server_box[0].should_exit = True
+        thread.join(timeout=5)
 
 
 @app.command(name="inspect")

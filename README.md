@@ -26,6 +26,8 @@ harness sessions                 # bu projenin oturumları
 harness eval -m opencode-go/glm-5.3 --anatomy files --anatomy bash -n 3   # deney
 harness eval --report <deney klasörü>  # biten deneyin özetini yeniden göster
 harness watch [--evals]          # canlı panel: kayıtlar tarayıcıda akar
+harness serve [-m ...]           # tarayıcıda sohbet (tek sayfa + WebSocket)
+harness desktop [-m ...]         # serve ile aynı, tarayıcı yerine masaüstü penceresinde
 harness inspect <kayıt>.jsonl --open   # koşu incelemesini (HTML) üret ve aç
 harness replay <kayıt>.jsonl     # ayrıntılı terminal gösterimiyle yeniden oynat
 harness demo [--tui]             # sahte modelle hazır görev (eğitim; sağlayıcı çağrısı yok)
