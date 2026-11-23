@@ -21,7 +21,10 @@ def _free_port() -> int:
     return port
 
 
-def test_available_is_false_without_pywebview() -> None:
+def test_available_is_false_without_pywebview(monkeypatch: pytest.MonkeyPatch) -> None:
+    # sys.modules[ad] = None: Python'un "bu modül yok" için resmi testi; gerçekten
+    # kurulu olup olmamasından bağımsız, geliştirici makinesine göre değişmez.
+    monkeypatch.setitem(sys.modules, "webview", None)
     assert desktop.available() is False
 
 
