@@ -511,6 +511,9 @@ async def test_model_failure_is_visible_and_does_not_leave_send_enabled(tmp_path
         assert app.report is not None
         events = read_session(app.session_log.path)
         assert isinstance(events[-1], TaskFinished) and events[-1].reason == "error"
+        assert events[-1].error is not None
+        flow_texts = [str(node.render()) for node in app.query(".flow-entry")]
+        assert any(events[-1].error in text for text in flow_texts)
         await app.submit("tekrar")
         assert len([e for e in read_session(app.session_log.path) if e.kind == "task_started"]) == 1
 

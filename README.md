@@ -9,6 +9,8 @@ Bilgisayar Mühendisliği bitirme projesi.
 > dokuz araç, dokuz sağlayıcı, tam ekran ve sade sohbet, `-p` ile tek seferlik görev,
 > zaman çizelgeli koşu incelemesi ve küçük bir değerlendirme görev seti
 > (`tasks/`, `core/evaluation.py`) var.
+>
+> Sunum akışı → [`docs/SUNUM.md`](docs/SUNUM.md).
 
 ## Kullanım
 

@@ -127,6 +127,60 @@ async def test_stream_http_error_and_empty_stream_are_errors() -> None:
             await StreamingChatCompletionsLLM(URL, "m", http).complete([UserMessage(text="x")])
 
 
+async def test_thinking_unsupported_retries_once_without_effort() -> None:
+    error_body = json.dumps({"error": {"message": "qwen2.5-coder:7b does not support thinking"}})
+    ok_body = sse(delta(content="tamam"))
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return (
+            httpx.Response(400, text=error_body)
+            if len(seen) == 1
+            else httpx.Response(200, text=ok_body)
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        llm = StreamingChatCompletionsLLM(URL, "m", http, effort="medium")
+        parts = [p async for p in llm.stream([UserMessage(text="x")])]
+
+    reply = parts[-1]
+    assert isinstance(reply, AssistantMessage) and reply.text == "tamam"
+    assert len(seen) == 2
+    assert json.loads(seen[0].content)["reasoning_effort"] == "medium"
+    assert "reasoning_effort" not in json.loads(seen[1].content)
+
+
+async def test_plain_400_without_thinking_in_the_message_is_not_retried() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(400, text=json.dumps({"error": "bozuk istek"}))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        llm = StreamingChatCompletionsLLM(URL, "m", http, effort="medium")
+        with pytest.raises(ChatCompletionsError, match="bozuk istek"):
+            await llm.complete([UserMessage(text="x")])
+    assert len(seen) == 1
+
+
+async def test_thinking_unsupported_without_effort_is_not_retried() -> None:
+    # effort hiç gönderilmemişse yeniden denemenin bir anlamı yok; tek istekte kalınır.
+    seen: list[httpx.Request] = []
+    error_body = json.dumps({"error": {"message": "does not support thinking"}})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(400, text=error_body)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        llm = StreamingChatCompletionsLLM(URL, "m", http)
+        with pytest.raises(ChatCompletionsError, match="thinking"):
+            await llm.complete([UserMessage(text="x")])
+    assert len(seen) == 1
+
+
 async def test_model_list_uses_declared_efforts_or_provider_defaults() -> None:
     body = json.dumps(
         {

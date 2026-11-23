@@ -26,6 +26,7 @@
     agents_md: "Proje talimatı", memory: "Hafıza", code_blocks: "Kod blokları",
     test_guard: "Test koruyucusu", context_prune: "Bağlam budama",
     checkpoint: "Kontrol noktası", finish_check: "Bitiş kontrolü",
+    tool_call_fallback: "Araç çağrısı yakalandı",
   };
   const LAYER_HELP = {
     loop_guard: "Aynı araç çağrısı art arda gelince harness modeli uyarır ya da çağrıyı durdurur.",
@@ -37,11 +38,12 @@
     context_prune: "Bağlam 60k token'ı aşınca son 5 adım dışındaki araç sonuçları kısa bir notla değiştirilir; seyrek ve toplu, önbellek bir kez kırılsın diye.",
     finish_check: "Model bitirmek isteyince harness, model çağırmadan, olaylara bakar: son düzenlemeden sonra komut çalıştı mı, planda yarım adım var mı, test koruyucusunun uyarısı özette cevaplandı mı. Eksik varsa bir kez hatırlatır.",
     checkpoint: "Sohbette her turdan önce çalışma dizininin görüntüsü ayrı bir gölge git deposuna alınır; /undo dosya değiştiren son turu geri alır. Model bunu görmez.",
+    tool_call_fallback: "Model araç çağrısını yapılandırılmış alana değil cevap metnine düz JSON olarak yazdığında, bilinen bir araç adı ve o aracın şemasına uyan argüman varsa harness bunu araç çağrısı sayar; yoksa dokunmaz.",
   };
   const ACTIONS = {
     warn: "modele hatırlatıldı", block: "çağrı çalıştırılmadı", truncate: "ortası kesildi",
     inject: "talimata eklendi", recall: "sonuca not eklendi", skip: "bir şey eklemedi",
-    prune: "eski sonuçlar çıkarıldı", save: "alındı",
+    prune: "eski sonuçlar çıkarıldı", save: "alındı", recover: "metinden araç çağrısı çıkarıldı",
   };
   // Eski kayıtlarda harness her araç sonucunu 2.000+2.000 karaktere sessizce kesiyordu.
   const OLD_CUT = /… \[\d+ karakter kısaltıldı\] …/;

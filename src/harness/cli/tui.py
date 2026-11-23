@@ -710,7 +710,7 @@ class HarnessApp(App[None]):
                             await self.add_flow(f"✓ {code_blocks_summary(event)}")
                         case HarnessIntervened():
                             await self.add_flow(f"⚑ harness · {intervention_summary(event)}")
-                        case TaskFinished(reason=reason):
+                        case TaskFinished(reason=reason, error=error):
                             finished = True
                             if reason in {"cancelled", "error"}:
                                 self.failed = True
@@ -720,12 +720,18 @@ class HarnessApp(App[None]):
                                     for label, value in summary_items(events_seen)
                                 )
                             )
+                            if reason == "error" and error:
+                                await self.add_flow(f"! Hata: {error}")
                             self.set_status(
                                 {
                                     "done": "Tamamlandı · Enter ile yeni mesaj",
                                     "step_limit": STEP_LIMIT_HINT,
                                     "cancelled": "Durduruldu · /new ya da /resume ile devam et",
-                                    "error": "Hata · ayrıntılar kayıtta",
+                                    "error": (
+                                        f"Hata: {error.splitlines()[0][:160]}"
+                                        if error
+                                        else "Hata · ayrıntılar kayıtta"
+                                    ),
                                 }[reason]
                             )
                         case ContextAssembled():
