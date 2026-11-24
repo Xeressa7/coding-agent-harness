@@ -12,6 +12,8 @@
     --muted: #9199a5;
     --primary: #6895f4;
     --danger: #e2585a;
+    --ok: #3ecf8e;
+    --ink-on-primary: #0b1020;
   }
   * { box-sizing: border-box; }
   body {
@@ -25,69 +27,152 @@
     height: 100vh;
   }
   header {
-    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 18px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
     color: var(--muted);
     font-size: 12px;
+    letter-spacing: 0.02em;
   }
-  header b { color: var(--primary); }
+  .brand { display: flex; align-items: center; gap: 7px; font-weight: 700; color: var(--text); }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px rgba(62, 207, 142, 0.18); }
+  .dot.off { background: var(--danger); }
+  header .sep { opacity: 0.5; }
   #log {
     flex: 1;
     overflow-y: auto;
-    padding: 16px;
+    padding: 24px 16px;
+    max-width: 820px;
+    width: 100%;
+    margin: 0 auto;
   }
+  #log::-webkit-scrollbar { width: 8px; }
+  #log::-webkit-scrollbar-track { background: transparent; }
+  #log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  #log::-webkit-scrollbar-thumb:hover { background: var(--muted); }
   #welcome {
-    max-width: 60ch;
-    margin: 48px auto 0;
+    max-width: 56ch;
+    margin: 56px auto 0;
     color: var(--muted);
     text-align: center;
     line-height: 1.7;
   }
-  #welcome b { display: block; color: var(--text); font-size: 18px; margin-bottom: 10px; }
+  #welcome b { display: block; color: var(--text); font-size: 19px; margin-bottom: 10px; }
   #welcome .example {
     display: inline-block;
-    margin-top: 16px;
-    padding: 6px 12px;
+    margin-top: 20px;
+    padding: 10px 16px;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 20px;
+    background: var(--surface);
     cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
   }
-  #welcome .example:hover { border-color: var(--primary); color: var(--primary); }
-  .msg { margin-bottom: 14px; max-width: 70ch; }
-  .msg .role { color: var(--primary); font-weight: 600; margin-bottom: 2px; }
-  .msg.user { border-left: 2px solid var(--primary); padding-left: 10px; }
+  #welcome .example:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    box-shadow: 0 2px 14px rgba(104, 149, 244, 0.15);
+  }
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .msg {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+    animation: fade-in 0.15s ease;
+  }
+  .msg.user { flex-direction: row-reverse; }
+  .avatar {
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    background: var(--border);
+    color: var(--text);
+  }
+  .msg.user .avatar { background: var(--primary); color: var(--ink-on-primary); }
+  .bubble {
+    max-width: 65ch;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+  }
+  .msg.user .bubble { background: rgba(104, 149, 244, 0.12); border-color: rgba(104, 149, 244, 0.35); }
+  .msg .role { color: var(--primary); font-weight: 600; margin-bottom: 4px; font-size: 12px; }
+  .msg.user .role { color: var(--text); opacity: 0.7; text-align: right; }
+  .msg .body { white-space: pre-wrap; line-height: 1.5; }
   .thought {
     color: var(--muted);
     font-style: italic;
-    font-size: 12px;
-    margin-bottom: 6px;
-    white-space: pre-wrap;
+    font-size: 12.5px;
     max-width: 70ch;
+    margin: 6px 0 14px;
+    padding: 8px 12px;
+    border-left: 2px solid var(--border);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 0 8px 8px 0;
+    white-space: pre-wrap;
+    animation: fade-in 0.15s ease;
   }
-  .tool { color: var(--muted); margin: 4px 0; font-size: 13px; }
-  .tool.error { color: var(--danger); }
+  .tool {
+    display: inline-block;
+    color: var(--muted);
+    margin: 6px 0;
+    padding: 5px 10px;
+    font-size: 12.5px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 6px;
+    max-width: 100%;
+    white-space: pre-wrap;
+    word-break: break-word;
+    animation: fade-in 0.15s ease;
+  }
+  .tool.error { color: var(--danger); background: rgba(226, 88, 90, 0.08); }
   .status { color: var(--muted); font-size: 12px; margin-top: 4px; }
   .ask-box {
     display: none;
-    margin: 8px 0;
-    padding: 10px 12px;
+    margin: 10px 0;
+    padding: 14px 16px;
     border: 1px solid var(--primary);
-    border-radius: 6px;
+    border-radius: 10px;
     background: var(--surface);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    animation: fade-in 0.15s ease;
   }
+  .ask-box > div:first-child { margin-bottom: 10px; font-weight: 600; }
   .ask-box button {
     margin-top: 8px;
     margin-right: 8px;
-    padding: 4px 12px;
-    border-radius: 6px;
+    padding: 6px 14px;
+    border-radius: 8px;
     border: 1px solid var(--border);
     background: transparent;
     color: var(--text);
     cursor: pointer;
     font-family: inherit;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
   }
+  .ask-box button:hover { border-color: var(--primary); color: var(--primary); background: rgba(104, 149, 244, 0.08); }
   .ask-box button.primary { border-color: var(--primary); color: var(--primary); }
+  .ask-box button.primary:hover { background: var(--primary); color: var(--ink-on-primary); }
   .ask-box input[type="text"] {
     display: block;
     margin-top: 8px;
@@ -95,15 +180,21 @@
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 8px;
+    border-radius: 8px;
+    padding: 7px 10px;
     font-family: inherit;
     font-size: 13px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .ask-box input[type="text"]:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(104, 149, 244, 0.15);
   }
   #composer {
     display: flex;
-    gap: 8px;
-    padding: 12px 16px;
+    gap: 10px;
+    padding: 14px 18px;
     border-top: 1px solid var(--border);
     background: var(--surface);
   }
@@ -112,25 +203,45 @@
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 10px;
+    border-radius: 10px;
+    padding: 10px 14px;
     font-family: inherit;
     font-size: 14px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  #task:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(104, 149, 244, 0.15);
   }
   #send {
-    padding: 8px 16px;
-    border-radius: 6px;
+    padding: 10px 20px;
+    border-radius: 10px;
     border: 1px solid var(--primary);
-    background: transparent;
-    color: var(--primary);
+    background: var(--primary);
+    color: var(--ink-on-primary);
     cursor: pointer;
     font-family: inherit;
+    font-weight: 600;
+    transition: opacity 0.15s ease, transform 0.1s ease;
   }
-  #send:disabled { opacity: 0.4; cursor: default; }
+  #send:hover:not(:disabled) { opacity: 0.88; }
+  #send:active:not(:disabled) { transform: scale(0.97); }
+  #send:disabled {
+    opacity: 0.4;
+    cursor: default;
+    background: transparent;
+    color: var(--muted);
+    border-color: var(--border);
+  }
 </style>
 </head>
 <body>
-<header>HARNESS &middot; <b id="conn">bağlanıyor…</b></header>
+<header>
+  <span class="brand"><span class="dot" id="dot"></span>HARNESS</span>
+  <span class="sep">&middot;</span>
+  <b id="conn">bağlanıyor…</b>
+</header>
 <div id="log">
   <div id="welcome">
     <b>Birlikte ne yapalım?</b>
@@ -153,6 +264,7 @@ const questionBox = document.getElementById("question");
 const taskInput = document.getElementById("task");
 const sendButton = document.getElementById("send");
 const connStatus = document.getElementById("conn");
+const connDot = document.getElementById("dot");
 
 // Akan cevabın/düşüncenin o anki DOM düğümleri; model_replied'da sıfırlanır.
 let currentReply = null;
@@ -169,7 +281,10 @@ function createMessage(role, cls) {
   hideWelcome();
   const div = document.createElement("div");
   div.className = "msg" + (cls ? " " + cls : "");
-  div.innerHTML = `<div class="role">${role}</div><div class="body"></div>`;
+  const initial = role === "Sen" ? "S" : "A";
+  div.innerHTML =
+    `<div class="avatar">${initial}</div>` +
+    `<div class="bubble"><div class="role">${role}</div><div class="body"></div></div>`;
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
   return div;
@@ -259,10 +374,12 @@ function askQuestion(question, options) {
 
 ws.onopen = () => {
   connStatus.textContent = "bağlandı";
+  connDot.className = "dot ok";
   sendButton.disabled = false;
 };
 ws.onclose = () => {
   connStatus.textContent = "bağlantı kesildi";
+  connDot.className = "dot off";
   sendButton.disabled = true;
 };
 
