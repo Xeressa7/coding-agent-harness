@@ -22,7 +22,9 @@ dependencies = [
 
 [project.optional-dependencies]
 # `harness desktop` için; çekirdek bağımlılık değil (uv sync --extra desktop).
-desktop = ["pywebview>=5.3,<6"]
+# PySide6: native pencere + zengin metin (QTextBrowser). qasync: Qt'nin olay döngüsünü
+# asyncio ile birleştirir — Agent.run() thread/kuyruk gerekmeden doğrudan tüketilir.
+desktop = ["PySide6>=6.8,<7", "qasync>=0.28,<1"]
 
 [project.scripts]
 harness = "harness.cli.app:main"
