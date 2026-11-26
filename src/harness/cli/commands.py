@@ -93,6 +93,8 @@ COMMANDS: tuple[Command, ...] = (
     Command("/watch", "Canlı paneli tarayıcıda açar: sohbet burada, akış orada", "İzleme"),
     Command("/inspect", "Son HTML incelemesini açar", "İzleme"),
     Command("/theme", "Renk teması: koyu, açık, yüksek kontrast, renk körü, kişisel", "Görünüm"),
+    Command("/panel", "Sağ panel: özet, akış ya da kapalı (Ctrl+B sıradakine geçer)", "Görünüm"),
+    Command("/thinking", "Düşünce görünümü: katlı, açık ya da gizli", "Görünüm"),
     Command("/help", "Bu liste", "Görünüm"),
     Command("/exit", "Çıkış (`/quit`)", "Görünüm"),
 )
@@ -141,6 +143,8 @@ ALIASES = {
     "/providers": "/connect",
     "/login": "/connect",
     "/logout": "/disconnect",
+    "/flow": "/panel",
+    "/thoughts": "/thinking",
 }
 DEFAULT_EFFORT_WORDS = {"varsayılan", "default", "none", "yok"}
 SESSION_LIMIT = 100
@@ -152,8 +156,41 @@ CHAT_STEP_LIMIT = 150
 STEP_LIMIT_HINT = "Adım sınırı doldu; geçmiş korundu: kaldığı yerden sürmesi için “devam” yaz."
 
 PickerKind = Literal[
-    "model", "effort", "connect", "anatomy", "resume", "theme", "sessions", "session", "command"
+    "model",
+    "effort",
+    "connect",
+    "anatomy",
+    "resume",
+    "theme",
+    "panel",
+    "thinking",
+    "sessions",
+    "session",
+    "command",
 ]
+# Sağ panel ve düşünce görünümleri (tam ekran). Ad ASCII'dir (ayar dosyası, komut argümanı);
+# Türkçe harfli yazım da kabul edilir. Sözlük sırası Ctrl+B'nin dolaşma sırasıdır.
+PANEL_MODES = {
+    "ozet": "Özet: plan, dokunulan dosyalar ve tur ölçüleri; araçlar sohbette tek satır",
+    "akis": "Akış: her olay sağda ayrı satır (eğitim ve izleme için)",
+    "kapali": "Panel yok; araçlar sohbette tek satır",
+}
+DEFAULT_PANEL = "ozet"
+THINKING_MODES = {
+    "katli": "Tek satır başlık; tıklayınca açılır",
+    "acik": "Düşünce akarken tamamen görünür",
+    "gizli": "Gösterilmez (kayıtta ve incelemede kalır)",
+}
+DEFAULT_THINKING = "katli"
+_ASCII = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+
+
+def view_name(value: str | None, modes: dict[str, str], default: str) -> str:
+    """Kullanıcının yazdığı görünüm adı (ör. "Akış") -> kayıtlı ad ("akis"); bilinmeyen: default."""
+    key = (value or "").strip().translate(_ASCII).lower()
+    return key if key in modes else default
+
+
 # Cevabın nerede gösterileceği (tam ekranda): sohbet, kapanan pencere ya da kısa bildirim.
 # Sade akış hepsini aynı biçimde yazar.
 ReplyView = Literal["chat", "panel", "note"]
@@ -209,6 +246,7 @@ class CommandReply:
     key: KeyRequest | None = None  # sıradaki adım: gizli anahtar girişi
     login: bool = False  # sıradaki adım: tarayıcıyla ChatGPT girişi (`ChatSession.login`)
     theme: str | None = None  # renk teması değişti: ön yüz yeni temayı uygular
+    display: bool = False  # panel ya da düşünce görünümü değişti: ön yüz yeniden düzenler
     # Sohbeti kirletmesin: bilgi komutları pencerede, onaylar kısa bildirim olarak çıkar.
     view: ReplyView = "note"
     title: str = ""  # pencere başlığı
@@ -245,6 +283,8 @@ class ChatSession:
         login: LoginRunner | None = None,
         open_url: Callable[[str], None] | None = None,
         theme: str | None = None,
+        panel: str | None = None,
+        thinking: str | None = None,
         max_steps: int = CHAT_STEP_LIMIT,
         checkpoints: bool = True,
     ) -> None:
@@ -264,6 +304,8 @@ class ChatSession:
         self._login = login
         self._open_url = open_url
         self.theme: str = palette_for(theme).name
+        self.panel: str = view_name(panel, PANEL_MODES, DEFAULT_PANEL)
+        self.thinking: str = view_name(thinking, THINKING_MODES, DEFAULT_THINKING)
         self._watch: WatchServer | None = None
         self._models: dict[str, list[ModelInfo]] = {}
         self.sessions_dir = sessions_dir
@@ -366,6 +408,10 @@ class ChatSession:
                 return CommandReply(self._watch_panel(argument))
             case "/theme":
                 return self._theme(argument)
+            case "/panel":
+                return self._panel(argument)
+            case "/thinking":
+                return self._thinking(argument)
             case "/status":
                 return CommandReply(self._status())
             case "/model":
@@ -466,6 +512,16 @@ class ChatSession:
         if provider.name not in self._models:
             self._models[provider.name] = await self._load_models(provider)
         return self._models[provider.name]
+
+    async def image_support(self) -> bool | None:
+        """Şu anki model görsel kabul ediyor mu; sağlayıcı bildirmiyorsa ya da liste
+        alınamıyorsa None (görsel gönderilir, sağlayıcı reddederse hata kayıtta görünür)."""
+        try:
+            models = await self._models_of(self.provider)
+        except Exception:  # liste alınamadı: bilinmiyor, göndermeyi engelleme
+            return None
+        found = next((m for m in models if m.slug == self.model), None)
+        return found.images if found is not None else None
 
     def _forget_models(self, provider: Provider) -> None:
         for other in PROVIDERS.values():
@@ -815,6 +871,41 @@ class ChatSession:
         self.theme = argument
         self._save()
         return CommandReply(f"Tema: **{argument}**", theme=argument)
+
+    def _panel(self, argument: str) -> CommandReply:
+        if not argument:
+            choices = tuple(
+                Choice(name, name, detail, current=name == self.panel)
+                for name, detail in PANEL_MODES.items()
+            )
+            return CommandReply(picker=Picker("panel", "Sağ panel (Ctrl+B dolaşır)", choices))
+        name = view_name(argument, PANEL_MODES, "")
+        if not name:
+            return CommandReply(f"`{argument}` adlı panel yok: {', '.join(PANEL_MODES)}.")
+        self.panel = name
+        self._save()
+        return CommandReply(f"Panel: **{name}**", display=True)
+
+    def cycle_panel(self) -> str:
+        """Sıradaki panel görünümü (tam ekranda Ctrl+B); seçim kalıcıdır."""
+        names = list(PANEL_MODES)
+        self.panel = names[(names.index(self.panel) + 1) % len(names)]
+        self._save()
+        return self.panel
+
+    def _thinking(self, argument: str) -> CommandReply:
+        if not argument:
+            choices = tuple(
+                Choice(name, name, detail, current=name == self.thinking)
+                for name, detail in THINKING_MODES.items()
+            )
+            return CommandReply(picker=Picker("thinking", "Düşünce görünümü", choices))
+        name = view_name(argument, THINKING_MODES, "")
+        if not name:
+            return CommandReply(f"`{argument}` adlı görünüm yok: {', '.join(THINKING_MODES)}.")
+        self.thinking = name
+        self._save()
+        return CommandReply(f"Düşünce: **{name}**", display=True)
 
     def cycle_theme(self) -> str:
         """Sıradaki tema (tam ekranda kısayol); seçim kalıcıdır."""

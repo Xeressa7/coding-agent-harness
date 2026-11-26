@@ -105,6 +105,21 @@
     return null;
   }
 
+  // Kayıt dosyası bağlamı öncekinden farkıyla yazar (session_log.compact_context):
+  // `reused` = önceki bağlamın aynen geçerli ilk mesaj sayısı, `tools_reused` = şemalar aynı.
+  // Saf: yeni olay döner; eski (tam) kayıtta olay aynen geri gelir.
+  function expandContext(event, previous) {
+    if (!event.reused && !event.tools_reused) return event;
+    if (!previous || event.reused > previous.messages.length) {
+      console.error("Bağlam önceki bağlama dayanıyor ama o yok", event.step);
+      return event;
+    }
+    return { ...event,
+             messages: previous.messages.slice(0, event.reused).concat(event.messages),
+             tools: event.tools_reused ? previous.tools : event.tools,
+             reused: 0, tools_reused: false };
+  }
+
   // ---------------------------------------------------------------- hesap (saf)
   function compile(events) {
     const out = { turns: [], records: [], start: null, end: null,
@@ -737,5 +752,5 @@
     };
   }
 
-  window.HarnessLedger = { create, compile, lineDiff, changeOf };
+  window.HarnessLedger = { create, compile, lineDiff, changeOf, expandContext };
 })();

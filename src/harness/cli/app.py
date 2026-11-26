@@ -34,6 +34,8 @@ from rich.table import Table
 from rich.text import Text
 from rich.theme import ThemeStackError
 
+from harness.cli.attachments import AttachmentError, from_file
+from harness.cli.clipboard import copy_text
 from harness.cli.commands import (
     CHAT_STEP_LIMIT,
     DEFAULT_EFFORT_WORDS,
@@ -101,7 +103,7 @@ from harness.llm.providers import (
     readiness,
 )
 from harness.llm.scripted import ScriptedLLM
-from harness.messages import AssistantMessage, ToolCall
+from harness.messages import AssistantMessage, ImageAttachment, ToolCall
 from harness.tools.ask_user import pick_answer
 from harness.tools.base import short
 
@@ -247,7 +249,12 @@ def pick_anatomy(name: str) -> Anatomy:
 
 def load_system_prompt(anatomy: Anatomy) -> str:
     """Anatominin talimat dosyası + açık talimat katmanları; açıklama yorumları modele gitmez."""
-    files = [_PROMPT_FILES[anatomy.prompt], *(["narrow_scope.md"] if anatomy.narrow_scope else [])]
+    files = [
+        _PROMPT_FILES[anatomy.prompt],
+        *(["narrow_scope.md"] if anatomy.narrow_scope else []),
+        *(["tool_guidance.md"] if anatomy.tool_guidance else []),
+        *(["scope_focus.md"] if anatomy.scope_focus else []),
+    ]
     texts = [(_PROMPT_DIR / name).read_text(encoding="utf-8") for name in files]
     return "\n\n".join(re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL).strip() for text in texts)
 
@@ -267,6 +274,7 @@ def chat_session(
     root: Path, config: RunConfig, http: httpx.AsyncClient, *, checkpoints: bool = True
 ) -> ChatSession:
     """Gerçek modelle sohbet; model listesi ve istemci aynı HTTP bağlantısını paylaşır."""
+    settings = load_settings()
     return ChatSession(
         root=root,
         anatomy=config.anatomy,
@@ -280,7 +288,9 @@ def chat_session(
         save_choice=remember,
         login=chatgpt_login,
         open_url=open_in_browser,
-        theme=load_settings().theme,
+        theme=settings.theme,
+        panel=settings.panel,
+        thinking=settings.thinking,
         max_steps=config.max_steps,
         checkpoints=checkpoints,
     )
@@ -300,6 +310,8 @@ def remember(session: ChatSession) -> None:
                 "effort": session.effort,
                 "anatomy": session.anatomy.name,
                 "theme": session.theme,
+                "panel": session.panel,
+                "thinking": session.thinking,
             }
         )
     )
@@ -363,6 +375,14 @@ def root_command(
     anatomy_name: AnatomyOption = None,
     allow: AllowOption = None,
     plain: PlainOption = False,
+    image: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--image",
+            "-i",
+            help="-p görevine görsel ekle (tekrarlanabilir; PNG, JPEG, GIF, WebP)",
+        ),
+    ] = None,
     max_steps: Annotated[
         int,
         typer.Option(
@@ -382,9 +402,21 @@ def root_command(
         return
     config = replace(resolve_config(model, effort, anatomy_name), max_steps=max_steps)
     if prompt is not None:
-        run_once(prompt, config, quiet=True, resume=continue_, allow=allow)
+        run_once(
+            prompt, config, quiet=True, resume=continue_, allow=allow, images=load_images(image)
+        )
     else:
+        if image:
+            raise typer.BadParameter("görsel yalnız -p ile verilir", param_hint="--image")
         run_chat(config, plain=plain, resume=continue_, allow=allow, pick=pick_session)
+
+
+def load_images(paths: list[Path] | None) -> tuple[ImageAttachment, ...]:
+    """`--image` dosyaları ek deposuna; okunamayan ya da görsel olmayan dosya hatadır."""
+    try:
+        return tuple(from_file(path) for path in paths or [])
+    except AttachmentError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--image") from exc
 
 
 def run_once(
@@ -394,6 +426,7 @@ def run_once(
     quiet: bool,
     resume: bool = False,
     allow: list[str] | None = None,
+    images: tuple[ImageAttachment, ...] = (),
 ) -> None:
     """Tek görev. `quiet` (-p): cevap stdout'a, geri kalan her şey stderr'e."""
     root = find_project_root(Path.cwd()) if quiet else start_session(config.label)
@@ -407,7 +440,7 @@ def run_once(
             if resume:
                 session.resume_latest()
             grant(session, allow)
-            return await run_turn(session.agent, question, session.log, quiet=quiet)
+            return await run_turn(session.agent, question, session.log, quiet=quiet, images=images)
 
     finish = run_async(run).finish
     if finish is not None and finish.reason in {"error", "cancelled"}:
@@ -424,9 +457,18 @@ class TurnOutcome:
 
 
 async def run_turn(
-    agent: Agent, question: str, log: SessionLogger, *, quiet: bool = False
+    agent: Agent,
+    question: str,
+    log: SessionLogger,
+    *,
+    quiet: bool = False,
+    with_report: bool = True,
+    images: tuple[ImageAttachment, ...] = (),
 ) -> TurnOutcome:
-    """Bir turu çalıştırır, olayları kaydeder. Sade akışta konuşma, -p'de yalnız cevap yazar."""
+    """Bir turu çalıştırır, olayları kaydeder. Sade akışta konuşma, -p'de yalnız cevap yazar.
+
+    `with_report=False`: HTML inceleme tur sonunda üretilmez (sohbette `/inspect` üretir).
+    """
     events: list[Event] = []
     report: Path | None = None
     streamed_text = ""
@@ -445,7 +487,7 @@ async def run_turn(
         with console.status("Model bekleniyor…") as status:
             if quiet:
                 status.stop()
-            stream = agent.run(question)
+            stream = agent.run(question, images)
             send: bool | str | None = None
             while True:
                 try:
@@ -530,7 +572,7 @@ async def run_turn(
             console.print()
             console.print("[yellow]Yanıt tamamlanmadı.[/]")
         if events:
-            report = _after_turn(events, log, quiet)
+            report = _after_turn(events, log, quiet, with_report)
     return TurnOutcome(finish, report)
 
 
@@ -571,12 +613,16 @@ def _permission(agent: Agent, event: PermissionRequested, *, interactive: bool) 
     return choice != "deny"
 
 
-def _after_turn(events: list[Event], log: SessionLogger, quiet: bool) -> Path | None:
+def _after_turn(
+    events: list[Event], log: SessionLogger, quiet: bool, with_report: bool = True
+) -> Path | None:
     if not quiet:
         items = summary_items(events)
         console.print(Text(" · ".join(f"{label}: {value}" for label, value in items)))
         if any(isinstance(e, TaskFinished) and e.reason == "step_limit" for e in events):
             console.print(Text(STEP_LIMIT_HINT, style="h.warn"))
+    if not with_report:
+        return None
     try:
         report = write_report(log.path)
     except (OSError, ValueError) as exc:
@@ -642,7 +688,7 @@ def run_chat(
 
 
 async def plain_loop(session: ChatSession) -> None:
-    report: Path | None = None
+    has_turns = False  # rapor ancak bir tur kaydedildiyse üretilebilir
     while True:
         try:
             console.rule("[h.user]Sen", align="left")
@@ -656,6 +702,7 @@ async def plain_loop(session: ChatSession) -> None:
             if reply.exit:
                 break
             if reply.inspect:
+                report = _inspect_now(session.log) if has_turns else None
                 if report:
                     typer.launch(report.resolve().as_uri())
                 else:
@@ -663,12 +710,21 @@ async def plain_loop(session: ChatSession) -> None:
             step: CommandReply | None = reply
             while step is not None:  # liste seçimi bir sonrakini açabilir (model → effort)
                 if step.reset:
-                    report = None
+                    has_turns = False
                 show_reply(step)
                 step = await next_step(session, step)
             continue
         console.print()
-        report = (await run_turn(session.agent, question, session.log)).report
+        await run_turn(session.agent, question, session.log, with_report=False)
+        has_turns = True  # rapor /inspect deyince üretilir
+
+
+def _inspect_now(log: SessionLogger) -> Path | None:
+    try:
+        return write_report(log.path)
+    except (OSError, ValueError) as exc:
+        errors.print(Text(f"Rapor oluşturulamadı: {exc}", style="h.warn"))
+        return None
 
 
 async def next_step(session: ChatSession, reply: CommandReply) -> CommandReply | None:
@@ -733,23 +789,6 @@ def show_reply(reply: CommandReply) -> None:
         if reply.transcript:
             console.rule(style="h.muted")
         console.print(Markdown(reply.text))
-
-
-def copy_text(text: str) -> bool:
-    """Sade akışta pano: Windows'ta clip, macOS'ta pbcopy, Linux'ta wl-copy/xclip."""
-    import shutil
-    import subprocess
-
-    for command in (["clip"], ["pbcopy"], ["wl-copy"], ["xclip", "-selection", "clipboard"]):
-        if shutil.which(command[0]) is None:
-            continue
-        data = text.encode("utf-16-le") if command[0] == "clip" else text.encode()
-        try:
-            subprocess.run(command, input=data, check=True, timeout=5)
-        except (OSError, subprocess.SubprocessError):
-            continue
-        return True
-    return False
 
 
 @app.command(hidden=True)

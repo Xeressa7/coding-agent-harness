@@ -245,3 +245,38 @@ def test_edit_and_write_calls_become_a_line_diff() -> None:
         f" call: {{arguments: {json.dumps(json.dumps(write))}}}}})"
     )
     assert isinstance(whole, dict) and whole["whole"] and whole["rows"] == [["+", "a"], ["+", "b"]]
+
+
+def test_expand_context_matches_python_reader(tmp_path: Path) -> None:
+    """Panel kaydı ham satırlardan okur: JS açması `read_session` ile aynı bağlamı vermeli."""
+    from test_session_log import growing_contexts
+
+    from harness.core.session_log import SessionLogger, read_session
+
+    log = SessionLogger(tmp_path / "oturum.jsonl")
+    for context in growing_contexts():
+        log.write(context)
+    script = (
+        "globalThis.window = globalThis;"
+        f"require({json.dumps(str(LEDGER_JS))});"
+        "let data = '';"
+        "process.stdin.on('data', (c) => data += c);"
+        "process.stdin.on('end', () => {"
+        "  let prev = null; const out = [];"
+        "  for (const line of data.split(String.fromCharCode(10)).filter(Boolean)) {"
+        "    prev = window.HarnessLedger.expandContext(JSON.parse(line), prev); out.push(prev);"
+        "  }"
+        "  process.stdout.write(JSON.stringify(out));"
+        "});"
+    )
+    done = subprocess.run(
+        ["node", "-e", script],
+        input=log.path.read_text(encoding="utf-8"),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        encoding="utf-8",
+    )
+    assert done.returncode == 0, done.stderr
+    expected = [json.loads(e.model_dump_json()) for e in read_session(log.path)]
+    assert json.loads(done.stdout) == expected

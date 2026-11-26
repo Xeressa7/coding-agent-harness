@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from harness.core.anatomy import Anatomy
-from harness.messages import Message, TokenUsage, ToolCall, ToolResult, ToolSpec
+from harness.messages import ImageAttachment, Message, TokenUsage, ToolCall, ToolResult, ToolSpec
 
 
 class _Event(BaseModel):
@@ -17,23 +17,34 @@ class _Event(BaseModel):
 class TaskStarted(_Event):
     kind: Literal["task_started"] = "task_started"
     task: str
+    images: tuple[ImageAttachment, ...] = ()  # kullanıcının eklediği görseller (dosya yolları)
     provider: str | None = None  # None: sağlayıcı kaydı öncesinden kalma oturum (ChatGPT)
     model: str | None = None
     effort: str | None = None
     anatomy: Anatomy | None = None  # None: anatomi kaydı öncesinden kalma oturum
     root: str | None = None  # ajanın çalıştığı klasör (harita ağacı); eski kayıtta None
+    # Harness'ın modele kendi verdiği her şeyin özeti: talimat (AGENTS.md eklenmeden) + araç
+    # şemaları, sha256'nın ilk 16 hanesi. Aynı parmak izi = aynı harness ayarı; adlar ve
+    # sürümler değişse de kayıtlar arası aynılık buradan doğrulanır. Eski kayıtta None.
+    fingerprint: str | None = None
 
 
 class ContextAssembled(_Event):
     """Bu adımda modele giden her şeyin birebir kopyası: mesajlar ve sunulan araç şemaları.
 
-    "Model neyi gördü?" sorusunun cevabıdır; kayıt büyür ama tahmin değil, gerçektir.
+    "Model neyi gördü?" sorusunun cevabıdır; tahmin değil, gerçektir.
+
+    Kayıt dosyasında tekrar yazılmaz: `reused` > 0 ise önceki bağlamın ilk `reused` mesajı
+    aynen geçerlidir ve `messages` yalnız sonrasını taşır; `tools_reused` araç şemaları için
+    aynısını söyler. `read_session` bunları açar; bellekteki olay hep tam kopyadır (0/False).
     """
 
     kind: Literal["context_assembled"] = "context_assembled"
     step: int
     messages: tuple[Message, ...]
     tools: tuple[ToolSpec, ...] = ()
+    reused: int = 0
+    tools_reused: bool = False
 
 
 class ModelStarted(_Event):

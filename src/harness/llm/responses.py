@@ -18,7 +18,8 @@ from typing import Any, Protocol
 
 import httpx
 
-from harness.llm.base import Effort, LLMError, ModelInfo, error_message
+from harness.llm.base import Effort, LLMError, ModelInfo, error_message, retry_after_seconds
+from harness.llm.images import data_url, missing_note
 from harness.messages import (
     AssistantMessage,
     Message,
@@ -170,7 +171,7 @@ def build_request(
             case SystemMessage():
                 instructions.append(message.text)
             case UserMessage():
-                items.append({"role": "user", "content": message.text})
+                items.append({"role": "user", "content": user_content(message)})
             case AssistantMessage():
                 if message.text:
                     items.append({"role": "assistant", "content": message.text})
@@ -263,7 +264,11 @@ def _http_error(response: httpx.Response) -> ResponsesError:
     except ValueError:
         body = None
     detail = error_message(body) or response.text[:500]
-    return ResponsesError(f"HTTP {response.status_code}: {detail}")
+    return ResponsesError(
+        f"HTTP {response.status_code}: {detail}",
+        status=response.status_code,
+        retry_after=retry_after_seconds(response.headers.get("retry-after")),
+    )
 
 
 async def list_models(tokens: TokenSource, http: httpx.AsyncClient) -> list[ModelInfo]:
@@ -277,12 +282,29 @@ async def list_models(tokens: TokenSource, http: httpx.AsyncClient) -> list[Mode
     return [_model_info(entry) for entry in entries if entry.get("visibility", "list") == "list"]
 
 
+def user_content(message: UserMessage) -> str | list[dict[str, Any]]:
+    """Görselsiz mesaj düz metindir; görsel varsa `input_text` + `input_image` parçaları."""
+    if not message.images:
+        return message.text
+    parts: list[dict[str, Any]] = [{"type": "input_text", "text": message.text}]
+    for image in message.images:
+        url = data_url(image)
+        parts.append(
+            {"type": "input_image", "image_url": url}
+            if url is not None
+            else {"type": "input_text", "text": missing_note(image)}
+        )
+    return parts
+
+
 def _model_info(entry: dict[str, Any]) -> ModelInfo:
     slug = str(entry.get("slug") or entry.get("id"))
     levels: list[dict[str, Any]] = entry.get("supported_reasoning_levels") or []
+    modalities: list[str] | None = entry.get("input_modalities")
     return ModelInfo(
         slug=slug,
         display_name=str(entry.get("display_name") or slug),
+        images=None if modalities is None else "image" in modalities,
         description=str(entry.get("description") or ""),
         default_effort=entry.get("default_reasoning_level"),
         efforts=[

@@ -1,5 +1,6 @@
 """Oturum kaydı ve demo komutu: yazılan olay aynen geri okunur, demo uçtan uca çalışır."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -94,3 +95,57 @@ def test_replay_shows_unfinished_stream_text_without_duplicating_completed_text(
     assert complete.exit_code == 0, complete.output
     assert complete.output.count("tam yanıt") == 1
     assert "Yanıt tamamlanmadı." not in complete.output
+
+
+def growing_contexts() -> list[ContextAssembled]:
+    """Konuşma adım adım uzar, sonra baştan bir mesaj değişir (budama gibi), araçlar sabit."""
+    tools = (ToolSpec(name="read_file", description="okur", parameters={}),)
+    system = SystemMessage(text="talimat")
+    history = [UserMessage(text="görev"), UserMessage(text="ek 1"), UserMessage(text="ek 2")]
+    pruned = [UserMessage(text="görev (budandı)"), *history[1:], UserMessage(text="ek 3")]
+    return [
+        ContextAssembled(step=1, messages=(system, *history[:1]), tools=tools),
+        ContextAssembled(step=2, messages=(system, *history[:2]), tools=tools),
+        ContextAssembled(step=3, messages=(system, *history), tools=tools),
+        ContextAssembled(step=4, messages=(system, *pruned), tools=()),
+        ContextAssembled(step=5, messages=(system, *pruned), tools=tools),
+    ]
+
+
+def test_context_is_stored_as_difference_and_read_back_exactly(tmp_path: Path) -> None:
+    events: list[Event] = [TaskStarted(task="görev"), *growing_contexts()]
+    log = SessionLogger(tmp_path / "oturum.jsonl")
+    for event in events:
+        log.write(event)
+
+    stored = [json.loads(line) for line in log.path.read_text(encoding="utf-8").splitlines()]
+    contexts = [r for r in stored if r["kind"] == "context_assembled"]
+    assert [(len(r["messages"]), r["reused"], r["tools_reused"]) for r in contexts] == [
+        (2, 0, False),  # ilk bağlam tam
+        (1, 2, True),  # yalnız yeni mesaj
+        (1, 3, True),
+        (4, 1, False),  # budanan mesajdan sonrası yeniden yazılır; araç yok
+        (0, 5, False),  # araçlar boştan geri geldi: tam yazılır
+    ]
+    assert read_session(log.path) == events
+
+
+def test_full_context_lines_from_old_logs_still_read(tmp_path: Path) -> None:
+    contexts = growing_contexts()
+    path = tmp_path / "eski.jsonl"
+    old = [c.model_dump_json(exclude={"reused", "tools_reused"}) for c in contexts]
+    path.write_text("\n".join(old) + "\n", encoding="utf-8")
+    assert read_session(path) == contexts
+    # Devam eden oturum aynı dosyaya yeni kaydediciyle ekler: ilk bağlamı tam yazılır.
+    log = SessionLogger(path)
+    log.write(contexts[-1])
+    assert json.loads(path.read_text(encoding="utf-8").splitlines()[-1])["reused"] == 0
+    assert read_session(path) == [*contexts, contexts[-1]]
+
+
+def test_context_that_points_to_a_missing_previous_one_is_an_error(tmp_path: Path) -> None:
+    path = tmp_path / "bozuk.jsonl"
+    line = ContextAssembled(step=2, messages=(), reused=3).model_dump_json()
+    path.write_text(line + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="önceki bağlam"):
+        read_session(path)

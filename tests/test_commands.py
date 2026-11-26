@@ -527,3 +527,19 @@ async def test_address_giving_commands_stay_in_a_window(tmp_path: Path) -> None:
     session, _ = make_session(tmp_path)
     await turn(session, "selam")
     assert (await session.run("/export notlar.md")).view == "panel"
+
+
+def test_panel_and_thinking_views_accept_turkish_spelling_and_cycle(tmp_path: Path) -> None:
+    session, _ = make_session(tmp_path)
+    assert (session.panel, session.thinking) == ("ozet", "katli")
+    listing = asyncio.run(session.run("/panel"))
+    assert listing.picker is not None and [c.value for c in listing.picker.choices] == [
+        "ozet",
+        "akis",
+        "kapali",
+    ]
+    reply = asyncio.run(session.run("/flow Akış"))  # takma ad + Türkçe harf
+    assert reply.display and session.panel == "akis"
+    assert "yok" in asyncio.run(session.run("/panel yan")).text and session.panel == "akis"
+    assert session.cycle_panel() == "kapali" and session.cycle_panel() == "ozet"
+    assert asyncio.run(session.run("/thinking GİZLİ")).display and session.thinking == "gizli"
