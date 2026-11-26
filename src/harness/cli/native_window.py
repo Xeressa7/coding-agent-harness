@@ -49,10 +49,12 @@ from harness.core.events import (
 from harness.messages import ToolCall
 from harness.tools.ask_user import pick_answer
 
+_ICON_PATH = Path(__file__).parent / "native_assets" / "icon.ico"
+
 
 def create_window(session: ChatSession, *, title: str = "Harness") -> Any:
     """`NativeWindow`'u kurar ve döner; yalnız burada PySide6 içe aktarılır."""
-    from PySide6.QtGui import QCloseEvent
+    from PySide6.QtGui import QCloseEvent, QIcon
     from PySide6.QtWidgets import (
         QDialog,
         QHBoxLayout,
@@ -106,6 +108,7 @@ def create_window(session: ChatSession, *, title: str = "Harness") -> Any:
             super().__init__()
             self.session = session
             self.setWindowTitle(title)
+            self.setWindowIcon(QIcon(str(_ICON_PATH)))
             self.resize(760, 640)
 
             self._blocks: list[Block] = []
@@ -349,9 +352,11 @@ def run_native(
     import sys
 
     import qasync
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     app: QApplication = QApplication.instance() or QApplication(sys.argv)  # pyright: ignore[reportAssignmentType] — instance() üst sınıf QCoreApplication döner
+    app.setWindowIcon(QIcon(str(_ICON_PATH)))  # görev çubuğu + izin diyaloğu gibi alt pencereler
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
 
