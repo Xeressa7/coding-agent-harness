@@ -1264,8 +1264,6 @@ def serve(
 
 @app.command()
 def desktop(
-    host: Annotated[str, typer.Option(help="Dinlenecek adres")] = "127.0.0.1",
-    port: Annotated[int, typer.Option(help="Dinlenecek port")] = 8765,
     demo: Annotated[
         bool, typer.Option("--demo", help="Sahte modelle, giriş gerektirmeden dener")
     ] = False,
@@ -1277,43 +1275,50 @@ def desktop(
     ] = False,
     title: Annotated[str, typer.Option(help="Pencere başlığı")] = "Harness",
 ) -> None:
-    """Aynı sohbeti tarayıcı sekmesi yerine bağımsız bir masaüstü penceresinde açar.
+    """Aynı sohbeti bağımsız, native bir masaüstü penceresinde açar (sunucu/port yok).
 
-    `serve` ile aynı çekirdek döngüsü ve aynı seçenekler; pywebview isteğe bağlı
+    `chat`'le aynı çekirdek döngü ve aynı seçenekler; PySide6+qasync isteğe bağlı
     bir bağımlılıktır (`uv sync --extra desktop`). Kurulu değilse anlaşılır bir
     uyarı verip `serve` ile tarayıcıda açmaya döner.
     """
-    from harness.cli import desktop as desktop_module
+    from harness.cli import native
 
-    if not desktop_module.available():
-        console.print(Text(desktop_module.MISSING, style="h.warn"))
-        serve(
-            host=host,
-            port=port,
-            demo=demo,
-            model=model,
-            effort=effort,
-            anatomy_name=anatomy_name,
-            ollama=ollama,
-        )
+    if not native.available():
+        console.print(Text(native.MISSING, style="h.warn"))
+        serve(demo=demo, model=model, effort=effort, anatomy_name=anatomy_name, ollama=ollama)
         return
 
-    config, root, prompt = _resolve_web_session(
-        model, effort, anatomy_name, demo, ollama, "masaüstü"
-    )
-    server_box: list[Any] = []
-    run = _web_app_runner(config, root, prompt, demo, host, port, server_box)
-    thread = threading.Thread(target=lambda: asyncio.run(run()), daemon=True)
-    thread.start()
-    if not desktop_module.wait_for_port(host, port, timeout=10):
-        console.print(Text(f"Sunucu başlamadı: http://{host}:{port}", style="h.error"))
+    if demo:
+        root = start_session("masaüstü · sahte model")
+
+        async def no_models(provider: Provider) -> list[ModelInfo]:
+            raise RuntimeError("demo sahte modelle çalışır")
+
+        def make_demo_session(http: httpx.AsyncClient) -> ChatSession:
+            return ChatSession(
+                root=root,
+                anatomy=get_preset("files"),  # senaryo read_file çağırır
+                provider=DEMO_PROVIDER,
+                model=DEMO_PROVIDER.label,
+                effort=None,
+                make_llm=lambda provider, model, effort: ScriptedLLM(DEMO_SCRIPT),
+                load_models=no_models,
+                load_prompt=load_system_prompt,
+                sessions_dir=sessions_dir(root),
+            )
+
+        native.run_native(make_demo_session, title=title, initial_task=DEMO_TASK)
+        return
+
+    if ollama and not (model or "").startswith("ollama/"):
+        model = f"ollama/{model or 'llama3.2'}"
+    config = resolve_config(model, effort, anatomy_name)
+    ready, why = readiness(config.provider)
+    if not ready:
+        console.print(Text(f"{config.provider.name} hazır değil: {why}", style="h.error"))
         raise typer.Exit(1)
-    try:
-        desktop_module.open_window(title, f"http://{host}:{port}")
-    finally:
-        if server_box:
-            server_box[0].should_exit = True
-        thread.join(timeout=5)
+    root = start_session(f"masaüstü · {config.label}")
+    native.run_native(lambda http: chat_session(root, config, http), title=title)
 
 
 @app.command(name="inspect")
