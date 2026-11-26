@@ -90,7 +90,15 @@ def test_layer_is_named_and_composable() -> None:
     assert anatomy.tool_guidance and anatomy.name == "bash+tool_guidance"
     assert (
         compose(
-            "bash", {"output_limit", "agents_md", "persistent_cwd", "ask_user", "tool_guidance"}
+            "bash",
+            {
+                "output_limit",
+                "agents_md",
+                "persistent_cwd",
+                "ask_user",
+                "tool_call_fallback",
+                "tool_guidance",
+            },
         )
         == "bash+tool_guidance"
     )
