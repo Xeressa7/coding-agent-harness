@@ -23,6 +23,8 @@ class Settings(BaseModel):
     effort: str | None = None  # None: modelin kendi varsayılanı
     anatomy: str | None = None  # None: varsayılan anatomi
     theme: str | None = None  # None: varsayılan renk teması (cli/themes.py)
+    panel: str | None = None  # None: varsayılan sağ panel görünümü (cli/commands.py)
+    thinking: str | None = None  # None: varsayılan düşünce görünümü (cli/commands.py)
 
 
 def load_settings(path: Path = DEFAULT_SETTINGS_PATH) -> Settings:

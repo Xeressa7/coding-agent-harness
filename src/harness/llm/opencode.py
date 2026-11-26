@@ -70,6 +70,7 @@ class CatalogModel(BaseModel):
     route: Route
     efforts: tuple[str, ...] = ()
     free: bool = False
+    images: bool | None = None  # models.dev `modalities.input`; eski önbellekte yok
 
 
 Catalog = dict[str, CatalogModel]
@@ -109,11 +110,14 @@ def parse_catalog(payload: dict[str, Any], provider_id: str) -> Catalog:
                 values: list[Any] = option.get("values") or []
                 efforts.extend(str(value) for value in values)
         cost: dict[str, Any] = entry.get("cost") or {}
+        modalities: dict[str, Any] = entry.get("modalities") or {}
+        inputs: list[str] | None = modalities.get("input")
         catalog[model_id] = CatalogModel(
             name=str(entry.get("name") or model_id),
             route=_PACKAGE_ROUTES.get(package, "chat"),
             efforts=tuple(efforts),
             free=bool(cost) and not cost.get("input") and not cost.get("output"),
+            images=None if inputs is None else "image" in inputs,
         )
     return catalog
 
@@ -265,9 +269,11 @@ class OpenCodeLLM:
         except LLMError as e:
             if str(e).startswith("HTTP 401"):
                 raise OpenCodeError(
-                    f"{e} — anahtar geçersiz; opencode.ai konsolundan yenisini al: /connect."
+                    f"{e} — anahtar geçersiz; opencode.ai konsolundan yenisini al: /connect.",
+                    status=e.status,
                 ) from e
             if str(e).startswith("HTTP 429") and "free" in str(e).lower():
+                # Ücretsiz modelin reddi kalıcıdır: beklemek işe yaramaz, yeniden denenmez.
                 raise OpenCodeError(
                     f"{e} — ücretsiz modeller yalnız OpenCode'un kendi uygulamasında çalışır."
                 ) from e
@@ -310,6 +316,7 @@ async def list_opencode_models(
                 display_name=known.name if known else model_id,
                 description=" · ".join(notes),
                 efforts=[Effort(name=name) for name in (known.efforts if known else ())],
+                images=known.images if known else None,
             )
         )
     return models

@@ -32,8 +32,18 @@ class EditFile(Tool[EditFileParams]):
     params_model = EditFileParams
     category = "write"
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, show_region: bool = False) -> None:
+        """show_region (`tool_guidance` katmanı): sonuç düzenlenen bölgeyi gösterir ve açıklama
+        read_file önekini katmamayı söyler. Kapalıyken sonuç eskisi gibi tek satırdır; model
+        düzenlemeyi doğrulamak için dosyayı yeniden okuyordu (5. tur pilotu)."""
         self._root = root.resolve()
+        self._show_region = show_region
+        if show_region:
+            self.description = (
+                f"{EditFile.description} old_text'e read_file'ın satır öneki (numara + sekme) "
+                "katılmaz; girinti dosyadaki gibi yazılır. Sonuç düzenlenen bölgeyi satır "
+                "numaralarıyla gösterir: doğrulamak için dosyayı yeniden okumaya gerek yok."
+            )
 
     def describe(self, params: EditFileParams) -> str:
         return params.path
@@ -70,8 +80,11 @@ class EditFile(Tool[EditFileParams]):
         line = text.count("\n", 0, start) + 1
         removed, added = count_lines(params.old_text), count_lines(params.new_text)
         where = f"{count} yerde" if count > 1 else f"{line}. satırdaki"
+        content = f"{params.path}: {where} metin değiştirildi."
+        if self._show_region:
+            content += "\n" + _region(path, line, added, first_only=count > 1)
         return ToolOutput(
-            f"{params.path}: {where} metin değiştirildi.",
+            content,
             summary=f"satır {line}"
             + (f" (+{count - 1} yer)" if count > 1 else "")
             + f" · −{removed} +{added}",
@@ -83,3 +96,20 @@ class EditFile(Tool[EditFileParams]):
                 "replaced": count,
             },
         )
+
+
+REGION_CONTEXT = 3  # düzenlenen bölgenin üstünde ve altında gösterilen satır
+REGION_MAX = 40  # uzun bir yeni metin sonucu şişirmesin
+
+
+def _region(path: Path, line: int, added: int, *, first_only: bool) -> str:
+    """Düzenlemeden sonraki dosyadan değişen satırlar ve çevresi; read_file'ın sekmeli önekiyle."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    first = max(1, line - REGION_CONTEXT)
+    last = min(len(lines), line + max(added, 1) - 1 + REGION_CONTEXT)
+    shown_last = min(last, first + REGION_MAX - 1)
+    width = len(str(shown_last))
+    rows = [f"{n:>{width}}\t{lines[n - 1]}" for n in range(first, shown_last + 1)]
+    head = "İlk değişen yer, düzenlemeden sonra:" if first_only else "Düzenlemeden sonra:"
+    tail = f"\n[… {last - shown_last} satır daha]" if shown_last < last else ""
+    return f"{head}\n" + "\n".join(rows) + tail

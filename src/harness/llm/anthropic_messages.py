@@ -22,6 +22,7 @@ import anthropic
 from anthropic import AsyncAnthropic
 
 from harness.llm.base import Effort, LLMError, ModelInfo, error_message
+from harness.llm.images import image_base64, missing_note
 from harness.messages import (
     AssistantMessage,
     Message,
@@ -63,6 +64,26 @@ _BLOCK_FIELDS = {
     "redacted_thinking": ("type", "data"),
     "tool_use": ("type", "id", "name", "input"),
 }
+
+
+def user_content(message: UserMessage) -> str | list[dict[str, Any]]:
+    """Görselsiz mesaj düz metindir; görsel varsa görsel blokları metinden önce gelir
+    (Anthropic'in önerdiği sıra: önce görsel, sonra soru)."""
+    if not message.images:
+        return message.text
+    parts: list[dict[str, Any]] = []
+    for image in message.images:
+        data = image_base64(image)
+        parts.append(
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": image.media_type, "data": data},
+            }
+            if data is not None
+            else {"type": "text", "text": missing_note(image)}
+        )
+    parts.append({"type": "text", "text": message.text})
+    return parts
 
 
 class AnthropicError(LLMError):
@@ -184,7 +205,7 @@ def build_request(
                 )
             case UserMessage():
                 flush_results()
-                messages.append({"role": "user", "content": message.text})
+                messages.append({"role": "user", "content": user_content(message)})
             case AssistantMessage():
                 flush_results()
                 content = _assistant_content(message)
@@ -255,6 +276,7 @@ async def list_anthropic_models(client: AsyncAnthropic) -> list[ModelInfo]:
                 slug=model.id,
                 display_name=model.display_name,
                 efforts=[Effort(name=name) for name in EFFORTS],
+                images=True,  # bütün Claude modelleri görsel okur
             )
             async for model in client.models.list()
         ]

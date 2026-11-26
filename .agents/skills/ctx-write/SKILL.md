@@ -1,9 +1,9 @@
 ---
-name: ctx-yaz
+name: ctx-write
 description: Kalıcı bulguyu kanonik hafızaya not olarak yaz (doğru klasör + frontmatter). Kalıcılaştırma testini geçen bilgi için kullan.
 ---
 
-# ctx-yaz — hafızaya yaz
+# ctx-write — hafızaya yaz
 
 Yalnız **lider ajan** yazar. Önce kalıcılaştırma testi: *bu bilgi üç ay sonra
 başka bir oturumda yeniden keşif maliyetini anlamlı azaltır mı?* Hayırsa

@@ -23,7 +23,7 @@ from harness.core.events import (
     ToolStarted,
 )
 from harness.core.metrics import ReadStats, WorkStats, read_stats, work_stats
-from harness.core.session_log import read_session
+from harness.core.session_log import compact_context, read_session
 from harness.messages import AssistantMessage, Message, ToolResult
 
 _STATUS = {
@@ -172,16 +172,26 @@ def _message_text(message: Message) -> str:
             return message.text
 
 
-def _event_html(event: Event) -> str:
+def _event_html(event: Event, previous: ContextAssembled | None = None) -> str:
+    """`previous`: aynı turdaki bir önceki bağlam; onunla aynı baş kısım yeniden basılmaz."""
     detail = ""
     match event:
         case TaskStarted():
             title = "Görev başladı"
         case ContextAssembled(step=step, messages=messages, tools=tools):
             title = f"Modele giden bağlam · adım {step} · {len(messages)} mesaj · {len(tools)} araç"
-            for message in messages:
+            same = compact_context(event, previous)
+            if same.reused:
+                detail += (
+                    f"<p>İlk {same.reused} mesaj adım {previous.step if previous else '?'} "
+                    "bağlamındakiyle birebir aynı; aşağıda yalnız sonrası var.</p>"
+                )
+            for message in messages[same.reused :]:
                 text = _message_text(message)
                 detail += f"<h4>{escape(message.role)} · {len(text)} karakter</h4>" + _pre(text)
+            if same.tools_reused:
+                detail += "<p>Araç şemaları önceki bağlamdakiyle aynı.</p>"
+                tools = ()
             for spec in tools:
                 schema = f"{spec.description}\n{json.dumps(spec.parameters, ensure_ascii=False)}"
                 detail += f"<h4>Araç şeması: {escape(spec.name)}</h4>" + _pre(schema)
@@ -249,6 +259,20 @@ def _event_html(event: Event) -> str:
     )
 
 
+# Raporun kendi imzası: üstüne yazılabilecek dosyayı kullanıcı dosyasından ayırır.
+REPORT_MARK = '<meta name="generator" content="harness-inspector">'
+
+
+def _events_html(events: Sequence[Event]) -> str:
+    previous: ContextAssembled | None = None
+    parts: list[str] = []
+    for event in events:
+        parts.append(_event_html(event, previous))
+        if isinstance(event, ContextAssembled):
+            previous = event
+    return "".join(parts)
+
+
 def render_report(events: Sequence[Event], source: str) -> str:
     """Her tur için okunur zaman çizelgesi; en altta ham olay kaydının tamamı (kapalı)."""
     turns: list[list[Event]] = []
@@ -276,13 +300,14 @@ def render_report(events: Sequence[Event], source: str) -> str:
             + render_turn(view)
             + "<details class='raw'><summary>Ham olay kaydı ve ölçümler "
             f"({len(visible)} olay)</summary><dl class='metrics'>{metrics}</dl><ol>"
-            + "".join(_event_html(e) for e in visible)
+            + _events_html(visible)
             + "</ol></details></section>"
         )
     content = "".join(sections) if sections else "<p>Bu kayıtta henüz olay yok.</p>"
     css = Path(__file__).with_name("inspector.css").read_text(encoding="utf-8")
     return (
         '<!doctype html><html lang="tr"><head><meta charset="utf-8">'
+        f"{REPORT_MARK}"
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<meta http-equiv="Content-Security-Policy" '
         'content="default-src &#39;none&#39;; style-src &#39;unsafe-inline&#39;; '
@@ -306,8 +331,18 @@ def render_report(events: Sequence[Event], source: str) -> str:
     )
 
 
+def _is_report(path: Path) -> bool:
+    """Dosya daha önce bu modülün yazdığı bir rapor mu (baştaki imzadan)?"""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as stream:
+            return REPORT_MARK in stream.read(400)
+    except OSError:
+        return False
+
+
 def write_report(log_path: Path, output: Path | None = None) -> Path:
-    """Kullanıcı dosyalarını ezmez; otomatik hedef doluysa yeni bir ad seçer."""
+    """Kullanıcı dosyalarını ezmez. Otomatik hedef (`<kayıt>.html`) bizim eski raporumuzsa
+    üstüne yazılır (oturum başına tek rapor); başka bir dosyaysa yeni bir ad seçilir."""
     if output is not None and output.resolve() == log_path.resolve():
         raise ValueError("Rapor hedefi oturum kaydı olamaz.")
     html = render_report(read_session(log_path), str(log_path))
@@ -321,5 +356,10 @@ def write_report(log_path: Path, output: Path | None = None) -> Path:
         except FileExistsError:
             if output is not None:
                 raise
+            if target.is_file() and _is_report(target):
+                temporary = target.with_name(target.name + ".tmp")
+                temporary.write_text(html, encoding="utf-8")
+                temporary.replace(target)
+                return target
             index += 1
             target = log_path.with_name(f"{log_path.stem}-{index}.html")

@@ -4,7 +4,9 @@ Screen {
     layout: vertical;
 }
 #topbar {
-    height: 2;
+    height: 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
     padding-top: 0;
     color: $text-muted;
     background: $surface;
@@ -18,11 +20,11 @@ Screen {
     border-left: solid $border;
     background: $surface;
 }
-#chat-heading { height: 3; padding: 0 1; }
-#chat-title { width: 1fr; height: 3; content-align: left middle; color: $primary; text-style: bold; }
-#latest { min-width: 12; height: 3; margin: 0; background: $background; border: none; }
-#flow-title { height: 3; padding: 1; color: $primary; text-style: bold; }
-#conversation, #flow {
+#chat-heading { height: 1; padding: 0 1; margin-top: 1; }
+#chat-title { width: 1fr; height: 1; content-align: left middle; color: $primary; text-style: bold; }
+#latest { min-width: 12; height: 1; margin: 0; background: $background; border: none; }
+#flow-title { height: 1; padding: 0 1; margin-top: 1; color: $primary; text-style: bold; }
+#conversation, #flow, #summary-scroll {
     height: 1fr;
     overflow-x: hidden;
     overflow-y: scroll;
@@ -34,23 +36,38 @@ Screen {
     scrollbar-color-active: $primary;
 }
 #conversation { padding: 0 1; }
-#flow { padding: 0 1; }
+#flow, #summary-scroll { padding: 0 1; }
+#summary { height: auto; }
+/* Panel görünümü (/panel, Ctrl+B): özet, akış ya da kapalı. Dar terminalde panel gizlenir. */
+.panel-ozet #flow { display: none; }
+.panel-ozet #flow-pane { width: 30; }
+.panel-akis #summary-scroll { display: none; }
+.panel-kapali #flow-pane, .narrow #flow-pane { display: none; }
+/* Araç satırı sohbette: akış paneli görünürken orada durduğu için sohbette gizlenir. */
+.tool-line { height: auto; padding: 0 1 0 2; color: $text-muted; }
+.tool-line.tool-error { color: $warning; }
+.panel-akis .tool-line { display: none; }
+.narrow .tool-line { display: block; }
+/* Düşünce görünümü (/thinking): gizliyken hiç çizilmez; kayıtta durur. */
+.thinking-gizli .thought { display: none; }
 #welcome { height: auto; padding: 1; color: $text-muted; }
 .message { height: auto; margin: 0 0 1 0; padding: 0 1; }
 .user-message { background: $surface; border-left: solid $primary; }
 .command-message { border-left: solid $text-muted; }
 .command-message .message-role { color: $text-muted; }
 .message-role { height: 1; text-style: bold; color: $primary; }
-.thought { height: auto; margin: 0 0 1 0; padding: 0; border: none; background: transparent; }
+.thought { height: auto; margin: 0; padding: 0; border: none; background: transparent; }
 .thought CollapsibleTitle { color: $text-muted; padding: 0 1; }
 .thought Contents { height: auto; padding: 0 1 0 3; }
 .thought-text { color: $text-muted; text-style: italic; }
 .message Markdown { height: auto; margin: 0; padding: 0; background: transparent; }
+.message Markdown > *:last-child { margin-bottom: 0; }
 .message MarkdownH1, .message MarkdownH2, .message MarkdownH3 { margin-top: 1; margin-bottom: 0; }
 .message MarkdownFence { margin: 1 0; padding: 0 1; }
 .flow-entry { height: auto; margin-bottom: 1; }
 #flow-empty { height: auto; color: $text-muted; }
-#composer { height: 8; padding: 0 1; background: $surface; }
+#composer { height: auto; max-height: 8; padding: 0 1; background: $surface; }
+#attachments { height: 1; color: $primary; display: none; }
 #message-input {
     height: 5;
     min-height: 3;
@@ -59,27 +76,30 @@ Screen {
     padding: 0 1;
 }
 #message-input:focus { border: round $primary; }
-#actions { height: 3; }
-#status { width: 1fr; height: 3; content-align: left middle; overflow: hidden hidden; }
-#actions Button { min-width: 10; width: 10; height: 3; margin-left: 1; }
+#actions { height: 1; }
+#status { width: 1fr; height: 1; content-align: left middle; overflow: hidden hidden; }
+#actions Button { min-width: 10; width: 10; height: 1; margin-left: 1; }
 #keys { height: 1; color: $text-muted; background: $surface; }
 .compact #topbar { height: 1; }
-.compact #composer { height: 6; }
+.compact #composer { max-height: 5; }
 .compact #message-input { height: 3; }
 .compact #keys { display: none; }
-.compact #chat-heading, .compact #flow-title { height: 1; padding: 0 1; }
+.compact #chat-heading, .compact #flow-title { height: 1; padding: 0 1; margin-top: 0; }
 .compact #chat-title { height: 1; }
 PermissionDialog { align: center middle; }
 #permission-dialog {
-    width: 74;
+    width: 96;
+    max-width: 95%;
     height: auto;
-    max-height: 80%;
-    padding: 1 2;
+    max-height: 90%;
+    padding: 0 2;
     background: $surface;
     border: round $primary;
 }
 #permission-title { text-style: bold; color: $primary; margin-bottom: 1; }
-#permission-args { color: $text-muted; margin-bottom: 1; }
+#permission-scroll { height: auto; max-height: 10; scrollbar-size: 1 1; }
+#permission-args { color: $text-muted; }
+#permission-keys { color: $text-muted; margin-bottom: 1; }
 #permission-actions { height: 3; align: right middle; }
 #permission-actions Button { min-width: 12; margin-left: 1; }
 #permission-actions #always { min-width: 22; }

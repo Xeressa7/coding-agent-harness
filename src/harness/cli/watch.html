@@ -503,9 +503,11 @@ function open(path) {
   source = new EventSource("/api/stream?path=" + encodeURIComponent(path));
   source.onopen = () => $("dot").classList.add("live");
   source.onerror = () => $("dot").classList.remove("live");
+  let context = null; // kayıtta bağlam öncekinden farkıyla yazılır; burada tam hâline açılır
   source.onmessage = (m) => {
     let event;
     try { event = JSON.parse(m.data); } catch (err) { console.error(err); return; }
+    if (event.kind === "context_assembled") event = context = HarnessLedger.expandContext(event, context);
     flow.append(event);
     filesView.append(event);
   };

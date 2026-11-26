@@ -39,6 +39,7 @@ from harness.llm.opencode import (
 )
 from harness.llm.responses import ResponsesLLM
 from harness.llm.responses import list_models as list_chatgpt_models
+from harness.llm.retry import with_retry
 
 ApiKind = Literal["chatgpt", "chat_completions", "anthropic", "opencode"]
 
@@ -202,7 +203,19 @@ def make_llm(
     http: httpx.AsyncClient,
     env: Mapping[str, str] | None = None,
 ) -> LLMClient:
-    """Sağlayıcının adaptörünü kurar. Anahtar eksikse hemen anlaşılır bir hata verir."""
+    """Sağlayıcının adaptörünü kurar; geçici hatalarda (429, 5xx, bağlantı) bekleyip yeniden dener.
+
+    Anahtar eksikse hemen anlaşılır bir hata verir (bu hata yeniden denenmez)."""
+    return with_retry(_adapter(provider, model, effort, http, env))
+
+
+def _adapter(
+    provider: Provider,
+    model: str,
+    effort: str | None,
+    http: httpx.AsyncClient,
+    env: Mapping[str, str] | None = None,
+) -> LLMClient:
     env = environment() if env is None else env
     match provider.api:
         case "chatgpt":

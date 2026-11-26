@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from harness.cli import app as cli
 from harness.cli import tui
 from harness.cli.commands import ChatSession
+from harness.core.anatomy import DEFAULT_PRESET
 from harness.llm.scripted import ScriptedLLM
 from harness.messages import AssistantMessage
 
@@ -43,7 +44,7 @@ def test_interactive_chat_routes_to_tui(tmp_path: Path, monkeypatch: pytest.Monk
     assert result.exit_code == 0, result.output
     result = runner.invoke(cli.app, ["-r"])  # açılışta oturum seçici
     assert result.exit_code == 0, result.output
-    assert calls[:2] == [("test-model", "raw", False), ("m2", "bash", True)]
+    assert calls[:2] == [("test-model", "raw", False), ("m2", DEFAULT_PRESET, True)]
     assert calls[2][2]
 
 
